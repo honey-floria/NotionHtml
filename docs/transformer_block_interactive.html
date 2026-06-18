@@ -1,0 +1,420 @@
+
+<style>
+:root { --purple-50:#EEEDFE;--purple-100:#CECBF6;--purple-400:#7F77DD;--purple-600:#534AB7;--purple-800:#3C3489;--teal-50:#E1F5EE;--teal-100:#9FE1CB;--teal-400:#1D9E75;--teal-600:#0F6E56;--teal-800:#085041;--coral-50:#FAECE7;--coral-100:#F5C4B3;--coral-400:#D85A30;--coral-600:#993C1D;--amber-50:#FAEEDA;--amber-100:#FAC775;--amber-400:#BA7517;--amber-600:#854F0B;--gray-50:#F1EFE8;--gray-100:#D3D1C7;--gray-400:#888780;--gray-600:#5F5E5A; }
+* { box-sizing:border-box; margin:0; padding:0; }
+.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0);}
+
+.container { padding: 1.25rem 0 2rem; }
+
+.stepper-nav { display:flex; gap:8px; margin-bottom:1.5rem; flex-wrap:wrap; }
+.step-btn {
+  padding:6px 14px; border-radius:20px; font-size:13px; font-weight:500; cursor:pointer;
+  border:0.5px solid var(--color-border-secondary);
+  background:var(--color-background-primary);
+  color:var(--color-text-secondary);
+  transition: all .15s;
+}
+.step-btn:hover { background:var(--color-background-secondary); }
+.step-btn.active {
+  background:var(--purple-50); color:var(--purple-800);
+  border-color:var(--purple-400);
+}
+@media (prefers-color-scheme:dark) {
+  .step-btn.active { background:var(--purple-800); color:var(--purple-100); border-color:var(--purple-400); }
+}
+
+.panel { display:none; }
+.panel.active { display:block; }
+
+.formula-box {
+  background:var(--color-background-secondary);
+  border:0.5px solid var(--color-border-tertiary);
+  border-left:3px solid var(--purple-400);
+  border-radius:0;
+  padding:10px 16px;
+  font-family:var(--font-mono);
+  font-size:13px;
+  color:var(--color-text-primary);
+  margin: 1rem 0;
+}
+
+.visual-area {
+  border:0.5px solid var(--color-border-tertiary);
+  border-radius:var(--border-radius-lg);
+  background:var(--color-background-primary);
+  padding:0;
+  overflow:hidden;
+  margin-bottom:1rem;
+}
+
+.kv-label { font-size:11px; font-weight:500; text-transform:uppercase; letter-spacing:.06em; color:var(--color-text-tertiary); margin-bottom:4px; }
+.token-row { display:flex; gap:8px; align-items:center; margin:8px 0; }
+.token {
+  padding:5px 10px; border-radius:6px; font-size:13px; font-weight:500; cursor:pointer;
+  border:0.5px solid var(--color-border-secondary);
+  background:var(--color-background-secondary);
+  color:var(--color-text-secondary);
+  transition:all .2s;
+  white-space:nowrap;
+}
+.token.selected { background:var(--amber-50); color:var(--amber-600); border-color:var(--amber-400); }
+.token.highlighted { background:var(--teal-50); color:var(--teal-600); border-color:var(--teal-400); }
+@media (prefers-color-scheme:dark) {
+  .token.selected { background:var(--amber-600); color:var(--amber-100); border-color:var(--amber-400); }
+  .token.highlighted { background:var(--teal-600); color:var(--teal-100); border-color:var(--teal-400); }
+}
+.token-label { font-size:11px; color:var(--color-text-tertiary); }
+
+.score-bars { padding:16px; }
+.score-row { display:flex; align-items:center; gap:10px; margin:8px 0; }
+.score-token { width:60px; font-size:13px; font-weight:500; color:var(--color-text-primary); text-align:right; flex-shrink:0; }
+.score-bar-bg { flex:1; height:18px; background:var(--color-background-secondary); border-radius:4px; overflow:hidden; border:0.5px solid var(--color-border-tertiary); }
+.score-bar { height:100%; border-radius:4px; transition:width .4s ease; }
+.score-val { width:44px; font-size:12px; color:var(--color-text-secondary); font-family:var(--font-mono); flex-shrink:0; }
+
+.layer-diagram { padding:16px; }
+.layer-block {
+  border:0.5px solid var(--color-border-tertiary);
+  border-radius:var(--border-radius-md);
+  padding:10px 14px;
+  margin:8px 0;
+  position:relative;
+  font-size:13px;
+}
+.layer-label { font-weight:500; color:var(--color-text-primary); font-size:13px; }
+.layer-sub { font-size:12px; color:var(--color-text-secondary); margin-top:2px; }
+
+.residual-arrow {
+  display:flex; align-items:center; gap:6px; font-size:12px; color:var(--color-text-tertiary); margin:2px 0 2px 8px;
+}
+
+.highlight-purple { background:var(--purple-50); border-color:var(--purple-400); }
+.highlight-teal   { background:var(--teal-50);   border-color:var(--teal-400); }
+.highlight-coral  { background:var(--coral-50);  border-color:var(--coral-400); }
+.highlight-amber  { background:var(--amber-50);  border-color:var(--amber-400); }
+@media (prefers-color-scheme:dark) {
+  .highlight-purple { background:color-mix(in srgb,var(--purple-800) 40%,transparent); border-color:var(--purple-400); }
+  .highlight-teal   { background:color-mix(in srgb,var(--teal-800) 40%,transparent);   border-color:var(--teal-400); }
+  .highlight-coral  { background:color-mix(in srgb,var(--coral-600) 30%,transparent);  border-color:var(--coral-400); }
+  .highlight-amber  { background:color-mix(in srgb,var(--amber-600) 30%,transparent);  border-color:var(--amber-400); }
+}
+.highlight-purple .layer-label { color:var(--purple-800); }
+.highlight-teal   .layer-label { color:var(--teal-800); }
+.highlight-coral  .layer-label { color:var(--coral-600); }
+.highlight-amber  .layer-label { color:var(--amber-600); }
+@media (prefers-color-scheme:dark) {
+  .highlight-purple .layer-label { color:var(--purple-100); }
+  .highlight-teal   .layer-label { color:var(--teal-100); }
+  .highlight-coral  .layer-label { color:var(--coral-100); }
+  .highlight-amber  .layer-label { color:var(--amber-100); }
+}
+
+.desc-text { font-size:14px; color:var(--color-text-secondary); line-height:1.65; margin-bottom:1rem; }
+.desc-text strong { font-weight:500; color:var(--color-text-primary); }
+
+.tag-pill {
+  display:inline-block; padding:2px 8px; border-radius:12px; font-size:11px; font-weight:500;
+  background:var(--purple-50); color:var(--purple-800); border:0.5px solid var(--purple-100);
+  margin-right:4px;
+}
+@media (prefers-color-scheme:dark){
+  .tag-pill { background:var(--purple-800); color:var(--purple-100); border-color:var(--purple-400); }
+}
+
+.norm-viz { display:flex; gap:12px; padding:16px; align-items:flex-end; }
+.norm-col { flex:1; }
+.norm-col-label { font-size:11px; color:var(--color-text-tertiary); margin-bottom:8px; text-align:center; }
+.bar-group { display:flex; gap:4px; align-items:flex-end; justify-content:center; height:80px; }
+.bar-unit {
+  width:22px; border-radius:3px 3px 0 0; transition:height .4s;
+}
+
+.arrow-connector { text-align:center; font-size:18px; color:var(--color-text-tertiary); line-height:1.2; margin:2px 0; }
+
+.interactive-hint { font-size:12px; color:var(--color-text-tertiary); margin-top:8px; }
+
+button.deep-btn {
+  margin-top:1rem; padding:7px 14px; border-radius:var(--border-radius-md);
+  font-size:13px; cursor:pointer; font-weight:500;
+  border:0.5px solid var(--color-border-secondary);
+  background:transparent; color:var(--color-text-secondary);
+}
+button.deep-btn:hover { background:var(--color-background-secondary); }
+</style>
+
+<h2 class="sr-only">Transformer 核心模块交互讲解：QKV、Attention Score、MLP、Residual、Norm</h2>
+
+<div class="container">
+
+<div class="stepper-nav" id="nav"></div>
+
+<div id="panels"></div>
+
+</div>
+
+<script>
+const STEPS = [
+  {
+    id:'qkv', label:'Q / K / V',
+    render: () => `
+      <p class="desc-text">输入向量 <strong>x</strong> 通过三个独立的线性变换得到 Q、K、V 三个矩阵：</p>
+      <div class="formula-box">Q = x · W_Q &nbsp;&nbsp; K = x · W_K &nbsp;&nbsp; V = x · W_V</div>
+      <div class="visual-area">
+        <div style="padding:16px">
+          <div class="kv-label">输入 token（每行是一个向量）</div>
+          <div class="token-row">
+            <span class="token">我</span>
+            <span class="token">爱</span>
+            <span class="token">深</span>
+            <span class="token">度</span>
+            <span class="token">学</span>
+            <span class="token">习</span>
+          </div>
+          <div style="margin:12px 0 8px">
+            <svg width="100%" viewBox="0 0 520 64" style="display:block">
+              <defs><marker id="a0" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>
+              <line x1="86" y1="8" x2="56" y2="48" stroke="#7F77DD" stroke-width="1.5" marker-end="url(#a0)"/>
+              <line x1="86" y1="8" x2="260" y2="48" stroke="#1D9E75" stroke-width="1.5" marker-end="url(#a0)"/>
+              <line x1="86" y1="8" x2="466" y2="48" stroke="#D85A30" stroke-width="1.5" marker-end="url(#a0)"/>
+              <text x="86" y="12" text-anchor="middle" font-size="12" fill="var(--color-text-secondary)" font-family="var(--font-sans)">x (输入)</text>
+              <rect x="10" y="46" width="92" height="22" rx="5" fill="#EEEDFE" stroke="#7F77DD" stroke-width="0.5"/>
+              <text x="56" y="61" text-anchor="middle" font-size="12" fill="#3C3489" font-family="var(--font-sans)" font-weight="500">Q · W_Q</text>
+              <rect x="212" y="46" width="96" height="22" rx="5" fill="#E1F5EE" stroke="#1D9E75" stroke-width="0.5"/>
+              <text x="260" y="61" text-anchor="middle" font-size="12" fill="#085041" font-family="var(--font-sans)" font-weight="500">K · W_K</text>
+              <rect x="418" y="46" width="96" height="22" rx="5" fill="#FAECE7" stroke="#D85A30" stroke-width="0.5"/>
+              <text x="466" y="61" text-anchor="middle" font-size="12" fill="#712B13" font-family="var(--font-sans)" font-weight="500">V · W_V</text>
+            </svg>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-top:8px">
+            <div style="background:var(--purple-50);border:0.5px solid var(--purple-100);border-radius:var(--border-radius-md);padding:10px">
+              <div style="font-size:13px;font-weight:500;color:var(--purple-800)">Q — Query</div>
+              <div style="font-size:12px;color:var(--purple-600);margin-top:4px;line-height:1.5">我想找什么？<br>代表当前 token 的"提问"</div>
+            </div>
+            <div style="background:var(--teal-50);border:0.5px solid var(--teal-100);border-radius:var(--border-radius-md);padding:10px">
+              <div style="font-size:13px;font-weight:500;color:var(--teal-800)">K — Key</div>
+              <div style="font-size:12px;color:var(--teal-600);margin-top:4px;line-height:1.5">我能回答什么？<br>每个位置的"标签"</div>
+            </div>
+            <div style="background:var(--coral-50);border:0.5px solid var(--coral-100);border-radius:var(--border-radius-md);padding:10px">
+              <div style="font-size:13px;font-weight:500;color:var(--coral-600)">V — Value</div>
+              <div style="font-size:12px;color:var(--coral-600);margin-top:4px;line-height:1.5">实际存的内容<br>被加权求和后输出</div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <button class="deep-btn" onclick="sendPrompt('Q、K、V 三个矩阵的维度是多少？W_Q W_K W_V 是怎么初始化和训练的？')">深入：W_Q/K/V 的维度与训练 ↗</button>
+    `
+  },
+  {
+    id:'attn', label:'Attention score',
+    render: () => {
+      const tokens = ['我','爱','深','度','学','习'];
+      const scores = [0.05, 0.18, 0.42, 0.20, 0.10, 0.05];
+      const barsHtml = tokens.map((t,i) => {
+        const pct = Math.round(scores[i]*100);
+        const w = Math.round(scores[i]*100);
+        const opacity = 0.2 + scores[i]*0.8;
+        return `<div class="score-row">
+          <div class="score-token">${t}</div>
+          <div class="score-bar-bg">
+            <div class="score-bar" style="width:${w}%;background:rgba(${i===2?'29,158,117':'127,119,221'},${opacity});"></div>
+          </div>
+          <div class="score-val">${pct}%</div>
+        </div>`;
+      }).join('');
+      return `
+      <p class="desc-text">Q 与所有 K 做点积，除以 <strong>√d_k</strong> 防止梯度消失，经 softmax 得到概率分布，再加权求和 V：</p>
+      <div class="formula-box">Attention(Q,K,V) = softmax( Q·Kᵀ / √d_k ) · V</div>
+      <div class="visual-area">
+        <div style="padding:16px 16px 4px">
+          <div style="font-size:12px;color:var(--color-text-tertiary);margin-bottom:8px">token "深" 作为 Query，与所有 Key 的相似度 → softmax → 注意力权重</div>
+          <div class="score-bars" style="padding:0">${barsHtml}</div>
+          <div style="margin-top:12px;display:flex;gap:8px;align-items:center">
+            <div style="font-size:12px;color:var(--color-text-tertiary)">输出 =</div>
+            <div style="font-size:12px;color:var(--color-text-secondary)">0.05·V<sub>我</sub> + 0.18·V<sub>爱</sub> + <strong style="color:var(--teal-600)">0.42·V<sub>深</sub></strong> + 0.20·V<sub>度</sub> + ...</div>
+          </div>
+        </div>
+        <div style="padding:12px 16px 16px;border-top:0.5px solid var(--color-border-tertiary);margin-top:12px">
+          <div style="font-size:12px;color:var(--color-text-tertiary);margin-bottom:6px">为什么除以 √d_k？</div>
+          <div style="font-size:13px;color:var(--color-text-secondary);line-height:1.6">随机初始化下，Q·Kᵀ 的方差 ≈ d_k。不缩放则点积过大，softmax 趋近 one-hot，梯度 ≈ 0，训练卡死。</div>
+        </div>
+      </div>
+      <button class="deep-btn" onclick="sendPrompt('Multi-head attention 是怎么工作的？为什么要多头而不是单头？')">深入：Multi-head attention ↗</button>
+    `;}
+  },
+  {
+    id:'mlp', label:'MLP / FFN',
+    render: () => `
+      <p class="desc-text">Attention 之后紧跟一个两层全连接网络（也叫 FFN），先升维再降维，中间激活函数用 GELU：</p>
+      <div class="formula-box">FFN(x) = GELU( x · W₁ + b₁ ) · W₂ + b₂<br>维度：d_model → 4×d_model → d_model</div>
+      <div class="visual-area">
+        <div style="padding:16px">
+          <div style="display:flex;align-items:center;gap:0;justify-content:center">
+            <div style="text-align:center">
+              <div style="width:48px;height:80px;background:var(--purple-50);border:0.5px solid var(--purple-400);border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:500;color:var(--purple-800);writing-mode:horizontal-tb">d<br>512</div>
+              <div style="font-size:11px;color:var(--color-text-tertiary);margin-top:4px">输入</div>
+            </div>
+            <div style="display:flex;flex-direction:column;align-items:center;margin:0 8px;margin-bottom:20px">
+              <div style="font-size:12px;color:var(--color-text-tertiary);white-space:nowrap">W₁ (512→2048)</div>
+              <div style="font-size:18px;color:var(--color-text-tertiary)">→</div>
+            </div>
+            <div style="text-align:center">
+              <div style="width:48px;height:130px;background:var(--teal-50);border:0.5px solid var(--teal-400);border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:500;color:var(--teal-800)">4d<br>2048</div>
+              <div style="font-size:11px;color:var(--color-text-tertiary);margin-top:4px">GELU</div>
+            </div>
+            <div style="display:flex;flex-direction:column;align-items:center;margin:0 8px;margin-bottom:20px">
+              <div style="font-size:12px;color:var(--color-text-tertiary);white-space:nowrap">W₂ (2048→512)</div>
+              <div style="font-size:18px;color:var(--color-text-tertiary)">→</div>
+            </div>
+            <div style="text-align:center">
+              <div style="width:48px;height:80px;background:var(--purple-50);border:0.5px solid var(--purple-400);border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:500;color:var(--purple-800)">d<br>512</div>
+              <div style="font-size:11px;color:var(--color-text-tertiary);margin-top:4px">输出</div>
+            </div>
+          </div>
+          <div style="margin-top:16px;padding:10px;background:var(--color-background-secondary);border-radius:var(--border-radius-md);font-size:13px;color:var(--color-text-secondary);line-height:1.6">
+            MLP 的作用是<strong style="color:var(--color-text-primary)">存储知识</strong>：Attention 负责"去哪里找"，MLP 负责"对取到的信息做非线性变换"。研究表明 MLP 像一个 key-value 记忆库，参数量占整个模型 ≈ 2/3。
+          </div>
+        </div>
+      </div>
+      <button class="deep-btn" onclick="sendPrompt('GELU 和 ReLU 的区别是什么？为什么 Transformer 用 GELU？')">深入：GELU vs ReLU ↗</button>
+    `
+  },
+  {
+    id:'residual', label:'Residual',
+    render: () => `
+      <p class="desc-text">每个子层（Attention 或 MLP）的输出都加上输入本身，形成残差连接，保证梯度畅通：</p>
+      <div class="formula-box">output = LayerNorm( x + Sublayer(x) )</div>
+      <div class="visual-area">
+        <div class="layer-diagram">
+          <div style="display:flex;align-items:stretch;gap:16px">
+            <div style="flex:1">
+              <div class="layer-block" style="text-align:center;background:var(--color-background-secondary)">
+                <div class="layer-label">x（输入）</div>
+              </div>
+              <div class="arrow-connector">↓</div>
+              <div class="layer-block highlight-purple">
+                <div class="layer-label">Sublayer(x)</div>
+                <div class="layer-sub">Attention 或 MLP</div>
+              </div>
+              <div class="arrow-connector">↓</div>
+              <div class="layer-block highlight-teal">
+                <div class="layer-label">x + Sublayer(x)</div>
+                <div class="layer-sub">残差相加</div>
+              </div>
+              <div class="arrow-connector">↓</div>
+              <div class="layer-block highlight-coral">
+                <div class="layer-label">LayerNorm(…)</div>
+                <div class="layer-sub">归一化输出</div>
+              </div>
+            </div>
+            <div style="width:120px;display:flex;flex-direction:column;justify-content:center;gap:6px">
+              <div style="font-size:12px;color:var(--color-text-tertiary);line-height:1.6;padding:10px;background:var(--color-background-secondary);border-radius:var(--border-radius-md)">
+                <strong style="color:var(--color-text-primary)">为什么重要？</strong><br><br>
+                梯度可以直接从深层 <em>跳过</em> 子层，回传到浅层。没有残差，100 层网络几乎无法训练。
+              </div>
+            </div>
+          </div>
+          <div style="margin-top:12px;padding:10px;background:var(--amber-50);border:0.5px solid var(--amber-100);border-radius:var(--border-radius-md);font-size:13px;color:var(--amber-600);line-height:1.6">
+            直觉：子层只需学习"残差修正量" Δx，而不是从零学整个变换。初始时 Δx ≈ 0，相当于恒等映射，训练非常稳定。
+          </div>
+        </div>
+      </div>
+      <button class="deep-btn" onclick="sendPrompt('Pre-Norm 和 Post-Norm 的区别？现代 LLM 为什么倾向于用 Pre-Norm？')">深入：Pre-Norm vs Post-Norm ↗</button>
+    `
+  },
+  {
+    id:'norm', label:'Norm',
+    render: () => `
+      <p class="desc-text">LayerNorm 在单个样本的特征维度上归一化，消除尺度差异，让每层输入分布稳定：</p>
+      <div class="formula-box">y = ( x − μ ) / ( σ + ε ) · γ + β<br>μ、σ 在同一个 token 的 d_model 维上计算</div>
+      <div class="visual-area">
+        <div class="norm-viz">
+          <div class="norm-col">
+            <div class="norm-col-label">归一化前（数值差异大）</div>
+            <div class="bar-group" id="bars-before"></div>
+            <div style="display:flex;gap:4px;justify-content:center;margin-top:6px">
+              <span style="font-size:11px;color:var(--color-text-tertiary)">各维度特征值</span>
+            </div>
+          </div>
+          <div style="display:flex;align-items:center;padding-bottom:20px;font-size:20px;color:var(--color-text-tertiary)">→</div>
+          <div class="norm-col">
+            <div class="norm-col-label">归一化后（均值≈0，方差≈1）</div>
+            <div class="bar-group" id="bars-after"></div>
+          </div>
+        </div>
+        <div style="padding:0 16px 16px;display:grid;grid-template-columns:1fr 1fr;gap:10px">
+          <div style="background:var(--color-background-secondary);border-radius:var(--border-radius-md);padding:10px">
+            <div style="font-size:12px;font-weight:500;color:var(--color-text-primary);margin-bottom:4px">γ、β（可学习参数）</div>
+            <div style="font-size:12px;color:var(--color-text-secondary);line-height:1.5">归一化后重新缩放和平移，让模型保留表达能力</div>
+          </div>
+          <div style="background:var(--color-background-secondary);border-radius:var(--border-radius-md);padding:10px">
+            <div style="font-size:12px;font-weight:500;color:var(--color-text-primary);margin-bottom:4px">vs BatchNorm</div>
+            <div style="font-size:12px;color:var(--color-text-secondary);line-height:1.5">BN 跨样本算统计，变长序列不适用；LN 在单样本内算</div>
+          </div>
+        </div>
+      </div>
+      <button class="deep-btn" onclick="sendPrompt('RMSNorm 和 LayerNorm 的区别？Llama 为什么用 RMSNorm？')">深入：RMSNorm（Llama 用的方案）↗</button>
+    `
+  }
+];
+
+const nav = document.getElementById('nav');
+const panels = document.getElementById('panels');
+let current = 0;
+
+STEPS.forEach((s,i) => {
+  const btn = document.createElement('button');
+  btn.className = 'step-btn' + (i===0?' active':'');
+  btn.textContent = s.label;
+  btn.onclick = () => activate(i);
+  nav.appendChild(btn);
+
+  const div = document.createElement('div');
+  div.className = 'panel' + (i===0?' active':'');
+  div.id = 'panel-'+i;
+  panels.appendChild(div);
+});
+
+function activate(i) {
+  current = i;
+  document.querySelectorAll('.step-btn').forEach((b,j)=>b.classList.toggle('active',j===i));
+  document.querySelectorAll('.panel').forEach((p,j)=>p.classList.toggle('active',j===i));
+  const panel = document.getElementById('panel-'+i);
+  panel.innerHTML = STEPS[i].render();
+  if(i===4) renderNormBars();
+}
+
+function renderNormBars() {
+  const before = [8, 2, 15, 1, 9, 3, 12, 5];
+  const after = [-0.7, -1.4, 1.2, -1.6, -0.3, -1.2, 0.9, -0.5];
+  const colors = ['#7F77DD','#534AB7','#1D9E75','#0F6E56','#D85A30','#993C1D','#BA7517','#854F0B'];
+
+  const bb = document.getElementById('bars-before');
+  const ba = document.getElementById('bars-after');
+  if(!bb||!ba) return;
+
+  const maxB = Math.max(...before);
+  before.forEach((v,i) => {
+    const el = document.createElement('div');
+    el.className = 'bar-unit';
+    el.style.height = Math.round(v/maxB*75) + 'px';
+    el.style.background = colors[i];
+    el.style.opacity = '0.8';
+    bb.appendChild(el);
+  });
+
+  const maxA = Math.max(...after.map(Math.abs));
+  after.forEach((v,i) => {
+    const wrapper = document.createElement('div');
+    wrapper.style.display = 'flex'; wrapper.style.flexDirection = 'column'; wrapper.style.alignItems = 'center'; wrapper.style.justifyContent = 'flex-end'; wrapper.style.height = '80px';
+    const el = document.createElement('div');
+    el.className = 'bar-unit';
+    el.style.height = Math.round(Math.abs(v)/maxA*35) + 'px';
+    el.style.background = v>0 ? '#1D9E75' : '#D85A30';
+    el.style.opacity = '0.8';
+    wrapper.appendChild(el);
+    ba.appendChild(wrapper);
+  });
+}
+
+activate(0);
+</script>

@@ -1,1 +1,226 @@
 
+<style>
+  .af-wrap { padding: 1rem 0; font-family: var(--font-sans); }
+  .af-tabs { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 1.25rem; }
+  .af-tab { padding: 5px 12px; border: 0.5px solid var(--color-border-secondary); border-radius: var(--border-radius-md); background: transparent; cursor: pointer; font-size: 13px; color: var(--color-text-secondary); transition: all .15s; }
+  .af-tab.active { background: var(--color-background-secondary); color: var(--color-text-primary); border-color: var(--color-border-primary); font-weight: 500; }
+  .af-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .af-card { background: var(--color-background-primary); border: 0.5px solid var(--color-border-tertiary); border-radius: var(--border-radius-lg); padding: 1rem 1.25rem; }
+  .af-formula { font-family: var(--font-mono); font-size: 13px; color: var(--color-text-secondary); background: var(--color-background-secondary); padding: 6px 10px; border-radius: var(--border-radius-md); margin: 8px 0; }
+  .af-props { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+  .af-badge { font-size: 11px; padding: 3px 8px; border-radius: 20px; }
+  .af-badge.good { background: #EAF3DE; color: #3B6D11; }
+  .af-badge.warn { background: #FAEEDA; color: #854F0B; }
+  .af-badge.info { background: #E6F1FB; color: #185FA5; }
+  @media (prefers-color-scheme: dark) {
+    .af-badge.good { background: #27500A; color: #C0DD97; }
+    .af-badge.warn { background: #633806; color: #FAC775; }
+    .af-badge.info { background: #0C447C; color: #B5D4F4; }
+  }
+  canvas { display: block; }
+</style>
+<div class="af-wrap">
+  <h2 class="sr-only">激活函数交互对比</h2>
+  <div class="af-tabs" id="tabs"></div>
+  <div class="af-grid">
+    <div class="af-card">
+      <div style="position:relative;height:220px;"><canvas id="fnCanvas" role="img" aria-label="激活函数曲线图"></canvas></div>
+      <div style="position:relative;height:140px;margin-top:8px;"><canvas id="gradCanvas" role="img" aria-label="梯度曲线图"></canvas></div>
+      <div style="font-size:12px;color:var(--color-text-secondary);margin-top:4px;display:flex;gap:16px;">
+        <span><span style="display:inline-block;width:10px;height:2px;background:#378ADD;vertical-align:middle;margin-right:4px;"></span>函数值</span>
+        <span><span style="display:inline-block;width:10px;height:2px;background:#D85A30;vertical-align:middle;margin-right:4px;border-top:1px dashed #D85A30;border-bottom:none;"></span>梯度</span>
+      </div>
+    </div>
+    <div class="af-card">
+      <div id="af-name" style="font-size:16px;font-weight:500;margin-bottom:4px;"></div>
+      <div id="af-formula" class="af-formula"></div>
+      <div id="af-desc" style="font-size:14px;color:var(--color-text-secondary);line-height:1.6;"></div>
+      <div id="af-props" class="af-props"></div>
+      <div id="af-usage" style="margin-top:12px;font-size:13px;color:var(--color-text-secondary);border-top:0.5px solid var(--color-border-tertiary);padding-top:10px;"></div>
+    </div>
+  </div>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<script>
+const fns = [
+  {
+    id:'sigmoid', label:'Sigmoid',
+    formula:'σ(x) = 1 / (1 + e⁻ˣ)',
+    fn: x => 1/(1+Math.exp(-x)),
+    grad: x => { const s=1/(1+Math.exp(-x)); return s*(1-s); },
+    range:[-6,6], yRange:[-0.1,1.1],
+    desc:'将任意实数压缩到 (0,1)，早期二分类输出层标配。输出可解释为概率。',
+    props:[{t:'输出有界 (0,1)',c:'info'},{t:'梯度饱和',c:'warn'},{t:'非零均值',c:'warn'}],
+    usage:'常用：二分类输出层 | 已被 ReLU 系列取代于隐藏层'
+  },
+  {
+    id:'tanh', label:'Tanh',
+    formula:'tanh(x) = (eˣ - e⁻ˣ) / (eˣ + e⁻ˣ)',
+    fn: x => Math.tanh(x),
+    grad: x => 1 - Math.tanh(x)**2,
+    range:[-5,5], yRange:[-1.2,1.2],
+    desc:'Sigmoid 的零均值版本，输出 (−1,1)，梯度更大，收敛快于 Sigmoid，但深层仍有饱和问题。',
+    props:[{t:'零均值输出',c:'good'},{t:'梯度饱和',c:'warn'},{t:'输出有界',c:'info'}],
+    usage:'常用：RNN/LSTM 门控 | 部分早期 CNN 隐藏层'
+  },
+  {
+    id:'relu', label:'ReLU',
+    formula:'ReLU(x) = max(0, x)',
+    fn: x => Math.max(0,x),
+    grad: x => x>0?1:0,
+    range:[-4,4], yRange:[-0.5,4.5],
+    desc:'正区间梯度恒为 1，彻底缓解梯度消失；计算极简。负输入梯度为零，存在"死亡神经元"风险。',
+    props:[{t:'无梯度消失 (正区)',c:'good'},{t:'计算高效',c:'good'},{t:'死亡神经元',c:'warn'}],
+    usage:'常用：CNN 默认激活函数 | 绝大多数浅层 MLP'
+  },
+  {
+    id:'leakyrelu', label:'Leaky ReLU',
+    formula:'f(x) = x if x>0 else αx  (α=0.01)',
+    fn: x => x>0?x:0.01*x,
+    grad: x => x>0?1:0.01,
+    range:[-4,4], yRange:[-0.6,4.5],
+    desc:'负区间保留小梯度 α（默认 0.01），消除死亡神经元。PReLU 则将 α 作为可学习参数。',
+    props:[{t:'无死亡神经元',c:'good'},{t:'负区梯度极小',c:'info'},{t:'多一个超参',c:'warn'}],
+    usage:'常用：GAN 判别器 | 需要避免死亡神经元的场景'
+  },
+  {
+    id:'elu', label:'ELU',
+    formula:'f(x) = x if x>0 else α(eˣ-1)',
+    fn: x => x>0?x:1.0*(Math.exp(x)-1),
+    grad: x => x>0?1:Math.exp(x),
+    range:[-4,4], yRange:[-1.5,4.5],
+    desc:'负区间用指数函数平滑，均值接近零，对噪声更鲁棒。代价是 exp 计算开销较 ReLU 大。',
+    props:[{t:'均值近零',c:'good'},{t:'平滑连续',c:'good'},{t:'exp 计算开销',c:'warn'}],
+    usage:'常用：部分深层 CNN | 需要负值输出的场景'
+  },
+  {
+    id:'gelu', label:'GELU',
+    formula:'GELU(x) ≈ x · σ(1.702x)',
+    fn: x => x * (1/(1+Math.exp(-1.702*x))),
+    grad: x => {
+      const s=1/(1+Math.exp(-1.702*x));
+      return s + 1.702*x*s*(1-s);
+    },
+    range:[-4,4], yRange:[-0.5,4.5],
+    desc:'基于高斯分布的软性门控，输入越大越接近线性，负区允许小负值通过。Transformer 主流激活函数。',
+    props:[{t:'平滑非单调',c:'good'},{t:'Transformer 主流',c:'info'},{t:'无死亡神经元',c:'good'}],
+    usage:'常用：BERT、GPT 系列 | ViT | 现代深层网络隐藏层'
+  },
+  {
+    id:'swish', label:'Swish / SiLU',
+    formula:'Swish(x) = x · σ(x)',
+    fn: x => x * (1/(1+Math.exp(-x))),
+    grad: x => {
+      const s=1/(1+Math.exp(-x));
+      return s + x*s*(1-s);
+    },
+    range:[-4,4], yRange:[-0.5,4.5],
+    desc:'Google 提出，平滑、无界，负区可通过小梯度。LLaMA/Mistral 的 FFN 使用其门控变体 SwiGLU。',
+    props:[{t:'平滑无界',c:'good'},{t:'LLM FFN 常用',c:'info'},{t:'无死亡神经元',c:'good'}],
+    usage:'常用：LLaMA、Mistral FFN (SwiGLU) | EfficientNet | 深层 MLP'
+  },
+  {
+    id:'softmax', label:'Softmax',
+    formula:'σᵢ = eˣⁱ / Σⱼ eˣʲ  (示意: 单输入归一化)',
+    fn: x => 1/(1+Math.exp(-x)),
+    grad: x => { const s=1/(1+Math.exp(-x)); return s*(1-s); },
+    range:[-5,5], yRange:[-0.1,1.1],
+    desc:'向量函数，将 logits 归一化为概率分布（和为 1）。单输入图示退化为 Sigmoid；实际用于多分类和 attention score。',
+    props:[{t:'输出概率分布',c:'info'},{t:'向量操作',c:'info'},{t:'可数值溢出',c:'warn'}],
+    usage:'常用：多分类输出层 | Transformer Attention 权重归一化'
+  }
+];
+
+let current = 0;
+let fnChart, gradChart;
+
+const isDark = ()=> matchMedia('(prefers-color-scheme: dark)').matches;
+
+function getColors() {
+  return {
+    fn: '#378ADD',
+    grad: '#D85A30',
+    grid: isDark() ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)',
+    tick: isDark() ? 'rgba(255,255,255,0.45)' : 'rgba(0,0,0,0.45)',
+    zero: isDark() ? 'rgba(255,255,255,0.2)' : 'rgba(0,0,0,0.2)',
+  };
+}
+
+function buildXs(a, b, n=200) {
+  const xs=[];
+  for(let i=0;i<=n;i++) xs.push(+(a+(b-a)*i/n).toFixed(4));
+  return xs;
+}
+
+function makeChartCfg(xs, ys, color, yMin, yMax, label, dashed=false) {
+  const c = getColors();
+  return {
+    type:'line',
+    data:{ labels:xs, datasets:[{
+      data:ys, borderColor:color, borderWidth:2,
+      borderDash: dashed ? [4,3] : [],
+      pointRadius:0, fill:false, tension:0.3, label
+    }]},
+    options:{
+      responsive:true, maintainAspectRatio:false,
+      animation:{duration:200},
+      plugins:{ legend:{display:false} },
+      scales:{
+        x:{ type:'linear', min:xs[0], max:xs[xs.length-1],
+            ticks:{ color:c.tick, font:{size:11}, maxTicksLimit:7,
+              callback:v=>v.toFixed(0) },
+            grid:{ color:c.grid },
+            border:{ color:c.zero } },
+        y:{ min:yMin, max:yMax,
+            ticks:{ color:c.tick, font:{size:11}, maxTicksLimit:5,
+              callback:v=>v.toFixed(1) },
+            grid:{ color:c.grid },
+            border:{ color:c.zero } }
+      }
+    }
+  };
+}
+
+function render(idx) {
+  const f = fns[idx];
+  const xs = buildXs(f.range[0], f.range[1]);
+  const ys = xs.map(f.fn);
+  const gs = xs.map(f.grad);
+  const c = getColors();
+
+  if(fnChart) fnChart.destroy();
+  if(gradChart) gradChart.destroy();
+
+  const gradMin = Math.min(...gs)-0.1, gradMax = Math.max(...gs)+0.1;
+
+  fnChart = new Chart(document.getElementById('fnCanvas'),
+    makeChartCfg(xs, ys, c.fn, f.yRange[0], f.yRange[1], '函数值'));
+  gradChart = new Chart(document.getElementById('gradCanvas'),
+    makeChartCfg(xs, gs, c.grad, gradMin, gradMax, '梯度', true));
+
+  document.getElementById('af-name').textContent = f.label;
+  document.getElementById('af-formula').textContent = f.formula;
+  document.getElementById('af-desc').textContent = f.desc;
+  document.getElementById('af-usage').innerHTML = '<i class="ti ti-bolt" aria-hidden="true" style="font-size:14px;vertical-align:-2px;margin-right:4px;"></i>' + f.usage;
+  const pb = document.getElementById('af-props');
+  pb.innerHTML = f.props.map(p=>`<span class="af-badge ${p.c}">${p.t}</span>`).join('');
+}
+
+function buildTabs() {
+  const el = document.getElementById('tabs');
+  fns.forEach((f,i)=>{
+    const btn = document.createElement('button');
+    btn.className = 'af-tab' + (i===0?' active':'');
+    btn.textContent = f.label;
+    btn.onclick = ()=>{
+      document.querySelectorAll('.af-tab').forEach(b=>b.classList.remove('active'));
+      btn.classList.add('active');
+      current=i; render(i);
+    };
+    el.appendChild(btn);
+  });
+}
+
+buildTabs();
+render(0);
+</script>

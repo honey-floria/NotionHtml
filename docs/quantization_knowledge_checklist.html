@@ -1,0 +1,204 @@
+
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:var(--font-sans)}
+.section{margin-bottom:2rem}
+.section-header{display:flex;align-items:center;gap:10px;margin-bottom:1rem;padding-bottom:8px;border-bottom:0.5px solid var(--color-border-tertiary)}
+.section-title{font-size:15px;font-weight:500;color:var(--color-text-primary)}
+.badge{font-size:11px;padding:2px 8px;border-radius:var(--border-radius-md);font-weight:500}
+.item{display:flex;align-items:flex-start;gap:10px;padding:10px 12px;border-radius:var(--border-radius-md);cursor:pointer;transition:background 0.15s;margin-bottom:4px;border:0.5px solid transparent}
+.item:hover{background:var(--color-background-secondary)}
+.item.done{background:var(--color-background-success);border-color:var(--color-border-success)}
+.item.active{background:var(--color-background-info);border-color:var(--color-border-info)}
+.checkbox{width:18px;height:18px;border-radius:4px;border:1.5px solid var(--color-border-secondary);display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-top:1px;transition:all 0.15s}
+.item.done .checkbox{background:var(--color-background-success);border-color:var(--color-text-success)}
+.item.done .checkbox::after{content:'✓';font-size:11px;color:var(--color-text-success);font-weight:500}
+.item-content{flex:1}
+.item-title{font-size:14px;color:var(--color-text-primary);line-height:1.4}
+.item.done .item-title{color:var(--color-text-success)}
+.item-sub{font-size:12px;color:var(--color-text-secondary);margin-top:3px;line-height:1.5}
+.item.active .item-sub{color:var(--color-text-info)}
+.expand-btn{font-size:11px;color:var(--color-text-info);cursor:pointer;margin-top:4px;display:inline-block}
+.detail-box{background:var(--color-background-secondary);border-radius:var(--border-radius-md);padding:12px 14px;margin-top:8px;font-size:13px;color:var(--color-text-secondary);line-height:1.7;display:none}
+.detail-box.open{display:block}
+.detail-box code{font-family:var(--font-mono);font-size:12px;background:var(--color-background-primary);padding:1px 5px;border-radius:4px;color:var(--color-text-primary)}
+.progress-bar{height:4px;background:var(--color-background-secondary);border-radius:2px;margin-bottom:4px}
+.progress-fill{height:100%;border-radius:2px;transition:width 0.3s;background:var(--color-text-success)}
+.progress-label{font-size:12px;color:var(--color-text-secondary);margin-bottom:1.5rem}
+.ask-btn{margin-top:8px;font-size:12px;padding:4px 10px;cursor:pointer}
+</style>
+
+<div style="padding:1rem 0">
+<h2 class="sr-only" style="position:absolute;left:-9999px">量化知识点学习清单</h2>
+
+<div id="progress-bar" class="progress-bar"><div class="progress-fill" id="fill" style="width:0%"></div></div>
+<div class="progress-label" id="prog-label">0 / 20 完成 — 点击条目标记掌握，再次点击展开说明</div>
+
+<div class="section">
+  <div class="section-header">
+    <span class="badge" style="background:var(--color-background-info);color:var(--color-text-info)">基础概念</span>
+    <span class="section-title">5 个知识点</span>
+  </div>
+  <div id="items-container"></div>
+</div>
+</div>
+
+<script>
+const data = [
+  {
+    section:"基础概念",
+    items:[
+      {
+        id:"scale-zp",
+        title:"Scale 与 Zero Point",
+        sub:"量化的核心参数：如何将浮点映射到整数",
+        detail:`量化公式：<code>x_q = round(x / scale) + zero_point</code><br>反量化：<code>x = (x_q - zero_point) × scale</code><br><br>• <b>scale</b>：浮点范围 / 整数范围，决定每个 tick 代表多少浮点值<br>• <b>zero_point</b>：浮点 0 对应的整数值，INT8 symmetric 中通常为 0<br>• scale 过大 → 精度损失；scale 过小 → clipping 截断误差`
+      },
+      {
+        id:"sym-asym",
+        title:"Symmetric vs Asymmetric 量化",
+        sub:"zero_point 是否为 0，影响对 activation 的适配能力",
+        detail:`<b>Symmetric</b>：zero_point = 0，量化范围关于 0 对称。<br>适合权重（分布近似对称），计算更简单（GEMM 无需 ZP 修正）。<br><br><b>Asymmetric</b>：zero_point ≠ 0，可以完整覆盖单侧分布（如 ReLU 后的激活值 [0, 6]）。<br>代价：矩阵乘法需要 zero_point 修正项，增加计算复杂度。<br><br>权重常用 symmetric，激活常用 asymmetric。`
+      },
+      {
+        id:"granularity",
+        title:"Per-tensor / Per-channel / Per-group",
+        sub:"量化粒度：scale 和 zero_point 共享范围越小，精度越高",
+        detail:`<b>Per-tensor</b>：整个 tensor 共享一组 (scale, zp)。开销最小，精度最低。<br><br><b>Per-channel</b>：权重每个 output channel 独立一组参数。精度大幅提升，适合 Conv/Linear，硬件支持良好。<br><br><b>Per-group</b>（如 group=128）：将 channel 内再分组，每组独立 scale。INT4 weight-only 量化的标配（GPTQ、AWQ 均使用），在精度和效率间取得平衡。<br>• Group size 越小 → 精度越高，但 scale 存储开销增加。`
+      },
+      {
+        id:"dyn-static",
+        title:"Dynamic vs Static 量化",
+        sub:"激活的 scale 是运行时计算还是离线校准",
+        detail:`<b>Static 量化</b>：离线用 calibration data 统计激活分布，固化 scale/zp。推理无额外开销，需要代表性数据集。<br><br><b>Dynamic 量化</b>：每次推理实时计算激活的 min/max → scale/zp，然后量化。<br>• 精度更高（无 calibration 误差）<br>• 运行时开销：每层需要一次 reduction（在 batch 较小时可接受）<br>• LLM decode 阶段常用 dynamic，因 batch=1 时 activation 统计变化大。`
+      },
+      {
+        id:"ptq-qat",
+        title:"PTQ vs QAT",
+        sub:"是否在训练中模拟量化误差",
+        detail:`<b>PTQ（Post-Training Quantization）</b>：训练完成后直接量化，用 calibration data 校准。成本低，大模型首选。<br><br><b>QAT（Quantization-Aware Training）</b>：训练时插入 fake-quantize 节点（前向模拟量化，反向用 STE 传梯度）。精度更高，但需要重新训练，成本高。<br><br>对于 LLM，QAT 成本过高，GPTQ/AWQ/SmoothQuant 均属于 PTQ 范畴（部分含少量校准优化）。`
+      }
+    ]
+  },
+  {
+    section:"算法",
+    items:[
+      {
+        id:"calib",
+        title:"Calibration 策略：MinMax / Percentile / KL / MSE",
+        sub:"如何从数据中确定最优 scale 范围",
+        detail:`<b>MinMax</b>：scale = (max - min) / 255。简单，易受 outlier 影响。<br><br><b>Percentile</b>：取 p99.99 等分位数代替真实 max，裁剪极端值，减少 clipping 对 scale 的影响。<br><br><b>KL 散度</b>：寻找使量化后分布与原始分布 KL 散度最小的 clip 范围。TensorRT 默认方法，需要搜索最优 threshold。<br><br><b>MSE</b>：最小化 <code>||x - dequant(quant(x))||²</code>，直接优化量化误差。通常比 KL 更精确，但稍慢。`
+      },
+      {
+        id:"gptq",
+        title:"GPTQ：逐层误差补偿",
+        sub:"用 Hessian 信息逐列量化权重并补偿后续列的误差",
+        detail:`核心思想：量化一列权重后，用该列的量化误差去更新（补偿）后续列的权重，使得整体输出误差最小。<br><br>关键步骤：<br>1. 收集激活 <code>X</code>，计算 Hessian <code>H = 2XX^T</code><br>2. 按列顺序逐列量化 <code>W_q[:,i]</code><br>3. 计算量化误差 <code>δ = W[:,i] - W_q[:,i]</code><br>4. 用 <code>H^{-1}</code> 将误差传播到后续列：<code>W[:,i+1:] -= δ · (H^{-1}[i,i+1:] / H^{-1}[i,i])</code><br><br>结果：INT4 精度接近 FP16，是大多数 weight-only 量化的基础。`
+      },
+      {
+        id:"awq",
+        title:"AWQ：Activation-Aware 权重量化",
+        sub:"保护对激活影响大的权重 channel，迁移量化难度",
+        detail:`观察：权重不同 channel 对输出的影响差异极大。部分 channel 对应的激活值持续偏大（salient channels），量化这些 channel 损失最大。<br><br>AWQ 做法：<br>1. 统计激活均值，找出 salient input channels（激活大 → 对应权重重要）<br>2. 对这些 channel 的权重乘以放大因子 <code>s</code>（等效缩小 scale，精度更高）<br>3. 对应激活除以 <code>s</code>（保持数学等价）<br><br>效果：<b>不改变模型结构</b>，仅通过缩放让量化 range 更集中，精度优于 GPTQ。`
+      },
+      {
+        id:"smoothquant",
+        title:"SmoothQuant：Outlier 平滑迁移",
+        sub:"将激活中的 outlier 难度迁移到权重侧",
+        detail:`问题：LLM 激活中存在大量 outlier（某些 token 的 hidden dim 值极大），导致激活量化 scale 很大，其他值精度极低。<br><br>解法：引入平滑因子 <code>s</code>，对每个 channel：<br><code>Y = (X / s) · (W · diag(s))</code><br><br>• 激活除以 <code>s</code> → outlier 被压缩，更易量化<br>• 权重乘以 <code>s</code> → 权重侧承担更多量化难度（但权重无 token 维度，per-channel 量化精度高）<br><br>数学等价，推理结果不变。允许激活和权重同时 INT8，实现真正的 W8A8 量化。`
+      },
+      {
+        id:"fp8",
+        title:"FP8：E4M3 vs E5M2",
+        sub:"8-bit 浮点的两种格式，精度与动态范围的取舍",
+        detail:`FP8 = 1 bit 符号 + exponent bits + mantissa bits<br><br><b>E4M3</b>（4 位指数 + 3 位尾数）：<br>• 动态范围：±448<br>• 精度更高（更多尾数位）<br>• 适合：权重和激活的前向传播<br><br><b>E5M2</b>（5 位指数 + 2 位尾数）：<br>• 动态范围：±57344（更大）<br>• 适合：梯度（梯度动态范围更宽）<br><br>Hopper（H100）原生支持 FP8 GEMM。主流做法：前向用 E4M3，反向梯度用 E5M2。`
+      }
+    ]
+  },
+  {
+    section:"系统",
+    items:[
+      {
+        id:"int8-gemm",
+        title:"INT8 GEMM 的 INT32 累加",
+        sub:"为什么 8-bit 乘法必须累加到 32-bit",
+        detail:`INT8 × INT8 的单次乘积范围：[-128,127] × [-128,127] = [-16384, 16129]，需要 16 bit 才能存下。<br><br>当 K（reduction 维度）较大时，累加 K 个这样的值：最坏情况 ~ K × 16384，若 K=4096 则需要约 26 bit。因此 INT8 GEMM 内部必须用 <code>int32</code> 累加器。<br><br>完成 GEMM 后，将 int32 结果 rescale 回 INT8 或 FP16（requantize），这步称为 <b>output scale</b>。<br>NVIDIA Tensor Core 的 INT8 GEMM 原生输出 INT32，再做 requantize。`
+      },
+      {
+        id:"int4-wo",
+        title:"INT4 Weight-Only 的解包与 Dequant",
+        sub:"权重以 INT4 存储，计算前解包为 FP16/BF16",
+        detail:`存储：两个 INT4 权重打包进一个 INT8 byte（节省 50% 显存）。<br><br>推理流程：<br>1. <b>解包（unpack）</b>：从 INT8 中提取高/低 4 bit，恢复两个 INT4 值<br>2. <b>Dequant</b>：<code>w_fp16 = (w_int4 - zero_point) × scale</code><br>3. 以 FP16/BF16 做实际 GEMM（激活也是 FP16）<br><br>因此 INT4 weight-only <b>不是 INT4 GEMM</b>——计算仍是 FP16，只是显存带宽减半。<br>适合 decode 阶段（memory-bound），prefill 阶段（compute-bound）收益有限。`
+      },
+      {
+        id:"memory-bw",
+        title:"量化对 Memory Bandwidth 的影响",
+        sub:"带宽节省 = bit width 降低比例，但受 overhead 影响",
+        detail:`理论带宽节省：<br>• FP16 → INT8：节省 50%（2 byte → 1 byte）<br>• FP16 → INT4：节省 75%（2 byte → 0.5 byte）<br><br>实际因素：<br>• <b>Scale/ZP 额外开销</b>：per-group (g=128) INT4，每 128 个权重多存 1 个 FP16 scale → 实际约 4.13 bit/param（略高于 4 bit）<br>• <b>Dequant 计算开销</b>：解包和 dequant 需要额外 GPU 指令，但通常 memory-bound 时这部分被 overlap 掉<br>• <b>Activation 不量化</b>（weight-only）时，KV cache 等仍是 FP16，带宽节省有限`
+      },
+      {
+        id:"prefill-decode",
+        title:"Prefill vs Decode 的性能瓶颈",
+        sub:"一个 compute-bound，一个 memory-bound，量化策略不同",
+        detail:`<b>Prefill</b>（处理 prompt）：<br>• batch × seq_len 作为矩阵，GEMM 是大矩阵乘法<br>• Compute-bound（算力是瓶颈）<br>• 量化收益：INT8/FP8 GEMM 可提升算力利用率<br>• weight-only INT4 收益有限（计算还是 FP16）<br><br><b>Decode</b>（逐 token 生成）：<br>• batch=1 或小 batch，每次 GEMM 是矩阵×向量（GEMV）<br>• Memory-bound（显存带宽是瓶颈）<br>• 量化收益：weight-only INT4 效果显著（带宽减半 → 速度近似翻倍）<br>• W8A8 收益相对较小（activation 量化开销反而占比上升）`
+      },
+      {
+        id:"kernel-check",
+        title:"判断量化是否真正调用低精度 Kernel",
+        sub:"量化不等于低精度推理，需要验证实际执行路径",
+        detail:`常见陷阱：框架"量化"了模型，但实际运行的还是 FP16 GEMM。<br><br>验证方法：<br>1. <b>Nsight Systems / nvtop</b>：查看 CUDA kernel 名称，确认是否调用 <code>cutlass_i8_gemm</code>、<code>ampere_fp8</code> 等低精度 kernel<br>2. <b>torch.profiler</b>：查看 kernel 名称中是否包含 <code>int8</code>、<code>fp8</code><br>3. <b>显存对比</b>：量化后模型参数应该减小（INT4 模型约为 FP16 的 25%），若不变则未真正量化<br>4. <b>吞吐量基准</b>：memory-bound 场景下真正 INT4 decode 速度应接近 FP16 的 2×；若无变化则 dequant 路径未生效<br>5. 检查 <code>torch.backends.cuda.matmul.allow_tf32</code> 等设置`
+      }
+    ]
+  }
+];
+
+let checked = {};
+let expanded = {};
+
+function render() {
+  const container = document.getElementById('items-container');
+  let html = '';
+  let total = 0, done = 0;
+  
+  data.forEach(section => {
+    html += `<div class="section"><div class="section-header"><span class="badge" style="background:var(--color-background-info);color:var(--color-text-info)">${section.section}</span><span class="section-title">${section.items.length} 个知识点</span></div>`;
+    section.items.forEach(item => {
+      total++;
+      const isDone = checked[item.id];
+      const isExpanded = expanded[item.id];
+      if(isDone) done++;
+      html += `
+        <div class="item ${isDone?'done':''}" onclick="toggle('${item.id}')">
+          <div class="checkbox"></div>
+          <div class="item-content">
+            <div class="item-title">${item.title}</div>
+            <div class="item-sub">${item.sub}</div>
+            <span class="expand-btn" onclick="event.stopPropagation();toggleDetail('${item.id}')">
+              ${isExpanded?'▲ 收起':'▼ 展开说明'}
+            </span>
+            <div class="detail-box ${isExpanded?'open':''}" id="detail-${item.id}">${item.detail}</div>
+            <button class="ask-btn" onclick="event.stopPropagation();sendPrompt('请详细讲解：${item.title}。包括原理、公式和实际例子。')">深入讲解 ↗</button>
+          </div>
+        </div>`;
+    });
+    html += '</div>';
+  });
+  
+  container.innerHTML = html;
+  const pct = Math.round(done/total*100);
+  document.getElementById('fill').style.width = pct + '%';
+  document.getElementById('prog-label').textContent = `${done} / ${total} 完成（${pct}%）— 点击条目标记掌握，再次点击展开说明`;
+}
+
+function toggle(id) {
+  checked[id] = !checked[id];
+  render();
+}
+
+function toggleDetail(id) {
+  expanded[id] = !expanded[id];
+  render();
+}
+
+render();
+</script>

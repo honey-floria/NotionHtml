@@ -1,0 +1,382 @@
+
+<style>
+.nav { display:flex; gap:6px; flex-wrap:wrap; margin-bottom:20px; }
+.nb { padding:6px 14px; font-size:13px; border-radius:20px; border:0.5px solid var(--color-border-secondary); background:transparent; color:var(--color-text-secondary); cursor:pointer; transition:all .15s; }
+.nb.on { background:var(--color-background-info); color:var(--color-text-info); border-color:var(--color-border-info); font-weight:500; }
+.pn { display:none; }
+.pn.on { display:block; }
+.callout { border-left:3px solid var(--color-border-info); padding:10px 14px; background:var(--color-background-info); border-radius:0 8px 8px 0; font-size:13px; color:var(--color-text-secondary); margin:14px 0; line-height:1.7; }
+.callout b { color:var(--color-text-primary); font-weight:500; }
+.warn { border-left:3px solid var(--color-border-warning); padding:10px 14px; background:var(--color-background-warning); border-radius:0 8px 8px 0; font-size:13px; color:var(--color-text-secondary); margin:14px 0; line-height:1.7; }
+.warn b { color:var(--color-text-warning); font-weight:500; }
+.good { border-left:3px solid var(--color-border-success); padding:10px 14px; background:var(--color-background-success); border-radius:0 8px 8px 0; font-size:13px; color:var(--color-text-secondary); margin:14px 0; line-height:1.7; }
+.good b { color:var(--color-text-success); font-weight:500; }
+.mono { font-family:var(--font-mono); font-size:13px; background:var(--color-background-secondary); padding:2px 6px; border-radius:4px; }
+</style>
+
+<h2 class="sr-only">GPTQ 从零开始深度讲解，共7个章节</h2>
+
+<div class="nav">
+  <button class="nb on" onclick="go(0)">① 为什么量化</button>
+  <button class="nb" onclick="go(1)">② 量化是什么</button>
+  <button class="nb" onclick="go(2)">③ RTN 的问题</button>
+  <button class="nb" onclick="go(3)">④ Hessian 是什么</button>
+  <button class="nb" onclick="go(4)">⑤ OBS 推导</button>
+  <button class="nb" onclick="go(5)">⑥ GPTQ 三改进</button>
+  <button class="nb" onclick="go(6)">⑦ 完整流程</button>
+</div>
+
+<div id="panels">
+
+<!-- ① 为什么要量化 -->
+<div class="pn on">
+<svg width="100%" viewBox="0 0 680 330" role="img">
+<title>大模型的内存问题</title>
+<desc>用FP16存储一个175B参数模型需要350GB显存，远超单张GPU容量</desc>
+<defs><marker id="a" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>
+
+<g class="c-red">
+  <rect x="40" y="30" width="380" height="80" rx="8" stroke-width="0.5"/>
+  <text class="th" x="230" y="62" text-anchor="middle" dominant-baseline="central">GPT-3 (175B 参数)</text>
+  <text class="ts" x="230" y="85" text-anchor="middle" dominant-baseline="central">FP16 存储 → 175B × 2 字节 = 350 GB 显存</text>
+</g>
+
+<g class="c-gray">
+  <rect x="40" y="140" width="160" height="60" rx="8" stroke-width="0.5"/>
+  <text class="th" x="120" y="165" text-anchor="middle" dominant-baseline="central">A100 80GB</text>
+  <text class="ts" x="120" y="183" text-anchor="middle" dominant-baseline="central">单卡最强</text>
+</g>
+<g class="c-gray">
+  <rect x="220" y="140" width="160" height="60" rx="8" stroke-width="0.5"/>
+  <text class="th" x="300" y="165" text-anchor="middle" dominant-baseline="central">A100 80GB</text>
+  <text class="ts" x="300" y="183" text-anchor="middle" dominant-baseline="central">第二张</text>
+</g>
+<text class="ts" x="400" y="172" text-anchor="middle">…还需要</text>
+<text class="ts" x="400" y="190" text-anchor="middle">2.5 张</text>
+
+<line x1="120" y1="110" x2="120" y2="138" stroke="#E24B4A" stroke-width="1" marker-end="url(#a)"/>
+<line x1="300" y1="110" x2="300" y2="138" stroke="#E24B4A" stroke-width="1" marker-end="url(#a)"/>
+
+<text class="ts" x="230" y="236" text-anchor="middle">350 GB ÷ 80 GB = 至少 4-5 张 A100 才能装下</text>
+
+<g class="c-teal">
+  <rect x="80" y="258" width="500" height="46" rx="8" stroke-width="0.5"/>
+  <text class="th" x="330" y="275" text-anchor="middle" dominant-baseline="central">量化目标：把 FP16（2字节）压缩成 INT4（0.5字节）</text>
+  <text class="ts" x="330" y="295" text-anchor="middle" dominant-baseline="central">显存占用降低 4×，同一张卡可以跑更大的模型</text>
+</g>
+</svg>
+<div class="callout"><b>类比：</b>FP16 就像用 Word 文档存数据——精确但很大。INT4 就像把内容压缩成 zip——小很多，但可能有点失真。量化就是在找这个压缩和失真之间的最佳平衡。</div>
+</div>
+
+<!-- ② 量化是什么 -->
+<div class="pn">
+<svg width="100%" viewBox="0 0 680 360" role="img">
+<title>量化的具体过程：将浮点数映射到整数</title>
+<desc>通过scale和zero_point将FP16浮点权重映射到INT4整数，再还原时乘以scale</desc>
+<defs><marker id="a" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>
+
+<text class="th" x="340" y="30" text-anchor="middle" dominant-baseline="central">量化 = 把连续浮点数映射到有限的整数档位</text>
+
+<g class="c-purple">
+  <rect x="40" y="50" width="280" height="100" rx="8" stroke-width="0.5"/>
+  <text class="th" x="180" y="78" text-anchor="middle" dominant-baseline="central">FP16 权重（量化前）</text>
+  <text class="ts" x="180" y="100" text-anchor="middle" dominant-baseline="central" font-family="var(--font-mono)">−1.247, 0.382, 0.891</text>
+  <text class="ts" x="180" y="120" text-anchor="middle" dominant-baseline="central" font-family="var(--font-mono)">−0.614, 1.203, 0.047</text>
+  <text class="ts" x="180" y="138" text-anchor="middle" dominant-baseline="central">任意浮点，精度极高</text>
+</g>
+
+<line x1="324" y1="100" x2="358" y2="100" stroke="#1D9E75" stroke-width="1.5" marker-end="url(#a)"/>
+<text class="ts" x="341" y="88" text-anchor="middle">quant</text>
+
+<g class="c-teal">
+  <rect x="362" y="50" width="278" height="100" rx="8" stroke-width="0.5"/>
+  <text class="th" x="501" y="78" text-anchor="middle" dominant-baseline="central">INT4 权重（量化后）</text>
+  <text class="ts" x="501" y="100" text-anchor="middle" dominant-baseline="central" font-family="var(--font-mono)">−10, 3, 7</text>
+  <text class="ts" x="501" y="120" text-anchor="middle" dominant-baseline="central" font-family="var(--font-mono)">−5, 10, 0</text>
+  <text class="ts" x="501" y="138" text-anchor="middle" dominant-baseline="central">整数，只有 16 个值可选</text>
+</g>
+
+<rect x="40" y="178" width="598" height="140" rx="8" fill="none" stroke="var(--color-border-secondary)" stroke-width="0.5"/>
+<text class="th" x="339" y="200" text-anchor="middle" dominant-baseline="central">量化公式（对称量化）</text>
+
+<text class="ts" x="339" y="224" text-anchor="middle" font-family="var(--font-mono)">scale = max(|W|) / 7        (INT4 范围 −8～7，约等于 /7)</text>
+<text class="ts" x="339" y="246" text-anchor="middle" font-family="var(--font-mono)">Q = round( W / scale )      (四舍五入到最近整数)</text>
+<text class="ts" x="339" y="268" text-anchor="middle" font-family="var(--font-mono)">W̃ = Q × scale              (反量化，用于推理)</text>
+
+<text class="ts" x="339" y="298" text-anchor="middle">例：W=0.382, scale=0.178 → round(0.382/0.178)=round(2.15)=2 → W̃=2×0.178=0.356</text>
+<text class="ts" x="339" y="316" text-anchor="middle">量化误差 = 0.382 − 0.356 = 0.026</text>
+</svg>
+<div class="callout"><b>为什么是 INT4？</b>INT4 只有 16 个可选值（−8 到 7）。每个权重从 16 bit 变成 4 bit，存储缩小 4 倍。推理时用 scale 还原成近似浮点数。精度损失来自于"四舍五入"这一步。</div>
+<div class="warn"><b>关键问题：</b>每次 round() 都引入了误差。单个权重的误差虽小，但一个层里有几百万个权重，误差会不会累积成大问题？——这正是 RTN 的缺陷，也是 GPTQ 要解决的。</div>
+</div>
+
+<!-- ③ RTN的问题 -->
+<div class="pn">
+<svg width="100%" viewBox="0 0 680 340" role="img">
+<title>RTN直接四舍五入的问题：权重之间有相关性，误差可以互相抵消</title>
+<desc>两个权重w1和w2同时作用于输出，w1的量化误差可以通过调整w2来补偿</desc>
+<defs><marker id="a" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>
+
+<text class="th" x="339" y="28" text-anchor="middle" dominant-baseline="central">线性层的输出：y = w₁x₁ + w₂x₂ + w₃x₃ + … + wₙxₙ</text>
+
+<g class="c-purple">
+  <rect x="40" y="50" width="596" height="50" rx="8" stroke-width="0.5"/>
+  <text class="ts" x="338" y="68" text-anchor="middle" dominant-baseline="central">假设只有两个权重，x₁=2.0, x₂=3.0</text>
+  <text class="th" x="338" y="88" text-anchor="middle" dominant-baseline="central">真实输出 y = w₁×2.0 + w₂×3.0 = 0.5×2.0 + 0.3×3.0 = 1.0 + 0.9 = 1.9</text>
+</g>
+
+<g class="c-red">
+  <rect x="40" y="126" width="280" height="90" rx="8" stroke-width="0.5"/>
+  <text class="th" x="180" y="150" text-anchor="middle" dominant-baseline="central">RTN 量化（各自独立）</text>
+  <text class="ts" x="180" y="172" text-anchor="middle" dominant-baseline="central">ŵ₁ = round(0.5/0.25)×0.25 = 0.5  ✓</text>
+  <text class="ts" x="180" y="192" text-anchor="middle" dominant-baseline="central">ŵ₂ = round(0.3/0.25)×0.25 = 0.25 ✗</text>
+</g>
+
+<g class="c-teal">
+  <rect x="360" y="126" width="276" height="90" rx="8" stroke-width="0.5"/>
+  <text class="th" x="498" y="150" text-anchor="middle" dominant-baseline="central">GPTQ（先量化 w₁ 再补偿）</text>
+  <text class="ts" x="498" y="172" text-anchor="middle" dominant-baseline="central">ŵ₁ = 0.5（同 RTN）</text>
+  <text class="ts" x="498" y="192" text-anchor="middle" dominant-baseline="central">ŵ₂ = 0.25 + 补偿 ≈ 0.267</text>
+</g>
+
+<g class="c-red">
+  <rect x="40" y="240" width="280" height="50" rx="8" stroke-width="0.5"/>
+  <text class="th" x="180" y="262" text-anchor="middle" dominant-baseline="central">RTN 输出</text>
+  <text class="ts" x="180" y="281" text-anchor="middle" dominant-baseline="central">0.5×2.0 + 0.25×3.0 = 1.75  误差 0.15</text>
+</g>
+
+<g class="c-teal">
+  <rect x="360" y="240" width="276" height="50" rx="8" stroke-width="0.5"/>
+  <text class="th" x="498" y="262" text-anchor="middle" dominant-baseline="central">GPTQ 输出</text>
+  <text class="ts" x="498" y="281" text-anchor="middle" dominant-baseline="central">0.5×2.0 + 0.267×3.0 ≈ 1.80  误差 0.10</text>
+</g>
+</svg>
+<div class="callout"><b>关键洞察：</b>线性层的输出是加权求和。w₂ 量化成 0.25 产生了 −0.05 的误差，但如果我们把 w₂ "少量调大"成 0.267，在与 x₂=3.0 相乘后，就能部分抵消 w₁ 量化带来的总输出误差。RTN 完全不考虑这一点——它每个权重独立四舍五入，白白浪费了可以互相补偿的机会。</div>
+<div class="warn"><b>问题变成了：</b>量化 w₁ 后，应该对 w₂, w₃, …, wₙ 各调整多少，才能让总输出误差最小？——这是一个有明确解析解的优化问题，答案就藏在 Hessian 矩阵里。</div>
+</div>
+
+<!-- ④ Hessian是什么 -->
+<div class="pn">
+<svg width="100%" viewBox="0 0 680 370" role="img">
+<title>Hessian矩阵的含义和构造方式</title>
+<desc>H=2XX转置，描述各权重对输出误差的二阶灵敏度，对角线元素越大代表该权重越敏感</desc>
+<defs><marker id="a" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>
+
+<text class="th" x="339" y="28" text-anchor="middle" dominant-baseline="central">Hessian 矩阵 H = 2XXᵀ，X 是校准数据的激活值</text>
+
+<rect x="40" y="50" width="596" height="110" rx="8" fill="none" stroke="var(--color-border-secondary)" stroke-width="0.5"/>
+<text class="th" x="338" y="74" text-anchor="middle" dominant-baseline="central">为什么是 H = 2XXᵀ？</text>
+<text class="ts" x="338" y="96" text-anchor="middle" dominant-baseline="central">输出误差 = ‖WX − ŴX‖² = ‖(W−Ŵ)X‖²   令 δ = W−Ŵ（权重误差）</text>
+<text class="ts" x="338" y="116" text-anchor="middle" dominant-baseline="central">展开 = δXXᵀδᵀ  →  对 δ 的二阶导数（Hessian）= 2XXᵀ</text>
+<text class="ts" x="338" y="140" text-anchor="middle" dominant-baseline="central">H 完全由输入激活 X 决定，与权重无关——只需算一次</text>
+
+<g class="c-purple">
+  <rect x="40" y="186" width="240" height="150" rx="8" stroke-width="0.5"/>
+  <text class="th" x="160" y="210" text-anchor="middle" dominant-baseline="central">H 矩阵（3个权重示例）</text>
+  <text class="ts" x="160" y="234" text-anchor="middle" dominant-baseline="central" font-family="var(--font-mono)">⎡ 8.2  1.4  0.3 ⎤</text>
+  <text class="ts" x="160" y="254" text-anchor="middle" dominant-baseline="central" font-family="var(--font-mono)">⎢ 1.4  3.1  0.8 ⎥</text>
+  <text class="ts" x="160" y="274" text-anchor="middle" dominant-baseline="central" font-family="var(--font-mono)">⎣ 0.3  0.8  1.5 ⎦</text>
+  <text class="ts" x="160" y="317" text-anchor="middle" dominant-baseline="central">对角线 = 各权重的"敏感度"</text>
+</g>
+
+<g class="c-teal">
+  <rect x="310" y="186" width="140" height="68" rx="8" stroke-width="0.5"/>
+  <text class="th" x="380" y="212" text-anchor="middle" dominant-baseline="central">H₁₁ = 8.2 大</text>
+  <text class="ts" x="380" y="234" text-anchor="middle" dominant-baseline="central">w₁ 非常敏感</text>
+  <text class="ts" x="380" y="252" text-anchor="middle" dominant-baseline="central">量化它误差大</text>
+</g>
+
+<g class="c-amber">
+  <rect x="310" y="268" width="140" height="68" rx="8" stroke-width="0.5"/>
+  <text class="th" x="380" y="294" text-anchor="middle" dominant-baseline="central">H₃₃ = 1.5 小</text>
+  <text class="ts" x="380" y="316" text-anchor="middle" dominant-baseline="central">w₃ 不太敏感</text>
+  <text class="ts" x="380" y="334" text-anchor="middle" dominant-baseline="central">量化它误差小</text>
+</g>
+
+<text class="ts" x="530" y="210" text-anchor="middle">非对角元素 H₁₂=1.4</text>
+<text class="ts" x="530" y="230" text-anchor="middle">代表 w₁ 和 w₂ 的</text>
+<text class="ts" x="530" y="250" text-anchor="middle">相关程度——越大</text>
+<text class="ts" x="530" y="270" text-anchor="middle">代表量化 w₁ 时</text>
+<text class="ts" x="530" y="290" text-anchor="middle">w₂ 能补偿越多</text>
+</svg>
+<div class="callout"><b>H⁻¹ 才是关键：</b>实际使用的是 H 的逆矩阵 H⁻¹。H⁻¹ 的第 q 列告诉我们："当 wq 被量化产生误差 ε 时，每个其他权重 wⱼ 应该被调整 ε × H⁻¹[j,q] 这么多。" 这是一个精确的解析解，不需要迭代。</div>
+<div class="callout"><b>校准数据：</b>用 128 条左右的真实样本输入模型，收集每层的激活值 X，然后算 H = 2XXᵀ。这就是 GPTQ 唯一需要的额外数据——不需要标签，不需要反向传播训练，只需要一次前向推理。</div>
+</div>
+
+<!-- ⑤ OBS推导 -->
+<div class="pn">
+<svg width="100%" viewBox="0 0 680 400" role="img">
+<title>OBS推导：用拉格朗日乘数法求量化后的最优权重补偿</title>
+<desc>将问题写成约束优化，通过Lagrange乘数法推导出补偿量的解析解</desc>
+<defs><marker id="a" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>
+
+<text class="th" x="339" y="28" text-anchor="middle" dominant-baseline="central">如何求"量化 wq 后，其他权重最优调整量"？</text>
+
+<g class="c-gray">
+  <rect x="40" y="48" width="596" height="68" rx="8" stroke-width="0.5"/>
+  <text class="th" x="338" y="72" text-anchor="middle" dominant-baseline="central">写成约束优化问题</text>
+  <text class="ts" x="338" y="96" text-anchor="middle" dominant-baseline="central">最小化：½ δᵀ H δ（所有权重调整量带来的输出误差）</text>
+  <text class="ts" x="338" y="112" text-anchor="middle" dominant-baseline="central">约束：δq = quant(wq) − wq（第 q 个权重的调整量已固定为量化误差）</text>
+</g>
+
+<line x1="339" y1="118" x2="339" y2="140" stroke="var(--color-border-secondary)" stroke-width="1" marker-end="url(#a)"/>
+<text class="ts" x="339" y="134" text-anchor="middle">拉格朗日乘数法求解</text>
+
+<g class="c-purple">
+  <rect x="40" y="144" width="596" height="80" rx="8" stroke-width="0.5"/>
+  <text class="th" x="338" y="168" text-anchor="middle" dominant-baseline="central">解析解（不用迭代，直接算出来）</text>
+  <text class="ts" x="338" y="194" text-anchor="middle" dominant-baseline="central" font-family="var(--font-mono)">δ = −( wq − quant(wq) ) / H⁻¹[q,q]  ×  H⁻¹[:,q]</text>
+  <text class="ts" x="338" y="214" text-anchor="middle" dominant-baseline="central">对每个权重 j：δⱼ = −误差q / H⁻¹qq × H⁻¹jq</text>
+</g>
+
+<g class="c-teal">
+  <rect x="40" y="250" width="180" height="110" rx="8" stroke-width="0.5"/>
+  <text class="th" x="130" y="278" text-anchor="middle" dominant-baseline="central">误差q</text>
+  <text class="ts" x="130" y="302" text-anchor="middle" dominant-baseline="central">= wq − quant(wq)</text>
+  <text class="ts" x="130" y="322" text-anchor="middle" dominant-baseline="central">量化引入的</text>
+  <text class="ts" x="130" y="342" text-anchor="middle" dominant-baseline="central">原始误差</text>
+</g>
+
+<g class="c-amber">
+  <rect x="248" y="250" width="184" height="110" rx="8" stroke-width="0.5"/>
+  <text class="th" x="340" y="278" text-anchor="middle" dominant-baseline="central">÷ H⁻¹[q,q]</text>
+  <text class="ts" x="340" y="302" text-anchor="middle" dominant-baseline="central">wq 的敏感度</text>
+  <text class="ts" x="340" y="322" text-anchor="middle" dominant-baseline="central">越大 = 该权重</text>
+  <text class="ts" x="340" y="342" text-anchor="middle" dominant-baseline="central">越关键</text>
+</g>
+
+<g class="c-coral">
+  <rect x="460" y="250" width="176" height="110" rx="8" stroke-width="0.5"/>
+  <text class="th" x="548" y="278" text-anchor="middle" dominant-baseline="central">× H⁻¹[:,q]</text>
+  <text class="ts" x="548" y="302" text-anchor="middle" dominant-baseline="central">第 q 列向量</text>
+  <text class="ts" x="548" y="322" text-anchor="middle" dominant-baseline="central">决定误差如何</text>
+  <text class="ts" x="548" y="342" text-anchor="middle" dominant-baseline="central">分配给各权重</text>
+</g>
+
+<text class="ts" x="339" y="384" text-anchor="middle">三部分相乘 = 每个剩余权重应该被调整的精确值</text>
+</svg>
+<div class="callout"><b>直观理解这个公式：</b>把误差想象成一桶水（量化误差），H⁻¹[q,q] 是一个比例系数把桶缩放，H⁻¹[:,q] 这一列是一个"分配器"——告诉你这桶水有多少应该倒给 w₁、多少倒给 w₂……每个权重分到的水量（调整量），正好能让总输出误差最小。</div>
+<div class="warn"><b>OBQ 的问题（GPTQ 要解决的）：</b>OBQ 每次选最优权重量化，然后更新 H⁻¹。选最优权重这一步本身需要 O(d²) 时间，d 是权重数量。整层下来是 O(d³ × d) = O(d⁴)，对于有数十亿参数的模型完全不可接受。</div>
+</div>
+
+<!-- ⑥ GPTQ三改进 -->
+<div class="pn">
+<svg width="100%" viewBox="0 0 680 420" role="img">
+<title>GPTQ对OBQ的三个关键改进</title>
+<desc>固定顺序去掉贪心搜索，批量更新提升GPU利用率，Cholesky分解保证数值稳定</desc>
+<defs><marker id="a" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>
+
+<g class="c-red">
+  <rect x="40" y="24" width="596" height="38" rx="8" stroke-width="0.5"/>
+  <text class="th" x="338" y="43" text-anchor="middle" dominant-baseline="central">OBQ 瓶颈：每步贪心找最优权重 → O(d⁴)，175B 模型需要几百年</text>
+</g>
+
+<g class="c-purple">
+  <rect x="40" y="88" width="185" height="44" rx="8" stroke-width="0.5"/>
+  <text class="th" x="132" y="110" text-anchor="middle" dominant-baseline="central">改进 1：固定顺序</text>
+</g>
+<rect x="40" y="148" width="185" height="140" rx="8" fill="none" stroke="var(--color-border-secondary)" stroke-width="0.5"/>
+<text class="ts" x="132" y="170" text-anchor="middle">OBQ 每步都要搜索</text>
+<text class="ts" x="132" y="190" text-anchor="middle">"哪个权重量化</text>
+<text class="ts" x="132" y="210" text-anchor="middle">误差最小" → O(d²)</text>
+<text class="ts" x="132" y="234" text-anchor="middle">GPTQ：直接从</text>
+<text class="ts" x="132" y="254" text-anchor="middle">左到右，不搜索</text>
+<text class="ts" x="132" y="274" text-anchor="middle">实验表明精度几乎无差</text>
+
+<g class="c-teal">
+  <rect x="247" y="88" width="185" height="44" rx="8" stroke-width="0.5"/>
+  <text class="th" x="340" y="110" text-anchor="middle" dominant-baseline="central">改进 2：批量更新</text>
+</g>
+<rect x="247" y="148" width="185" height="140" rx="8" fill="none" stroke="var(--color-border-secondary)" stroke-width="0.5"/>
+<text class="ts" x="340" y="170" text-anchor="middle">每量化 1 列就更新</text>
+<text class="ts" x="340" y="190" text-anchor="middle">一次 H⁻¹ → 串行</text>
+<text class="ts" x="340" y="210" text-anchor="middle">且 GPU 利用率低</text>
+<text class="ts" x="340" y="234" text-anchor="middle">GPTQ：攒 128 列</text>
+<text class="ts" x="340" y="254" text-anchor="middle">一起更新，变成</text>
+<text class="ts" x="340" y="274" text-anchor="middle">大矩阵乘 → 速度 ↑10×</text>
+
+<g class="c-amber">
+  <rect x="454" y="88" width="182" height="44" rx="8" stroke-width="0.5"/>
+  <text class="th" x="545" y="110" text-anchor="middle" dominant-baseline="central">改进 3：Cholesky</text>
+</g>
+<rect x="454" y="148" width="182" height="140" rx="8" fill="none" stroke="var(--color-border-secondary)" stroke-width="0.5"/>
+<text class="ts" x="545" y="170" text-anchor="middle">直接维护 H⁻¹ 并</text>
+<text class="ts" x="545" y="190" text-anchor="middle">逐步更新，浮点</text>
+<text class="ts" x="545" y="210" text-anchor="middle">误差会累积</text>
+<text class="ts" x="545" y="234" text-anchor="middle">GPTQ：提前对 H</text>
+<text class="ts" x="545" y="254" text-anchor="middle">做 Cholesky 分解</text>
+<text class="ts" x="545" y="274" text-anchor="middle">数值稳定，不崩溃</text>
+
+<g class="c-green">
+  <rect x="40" y="314" width="596" height="80" rx="8" stroke-width="0.5"/>
+  <text class="th" x="338" y="342" text-anchor="middle" dominant-baseline="central">三个改进合并后：整层 O(d³)，一次性完成</text>
+  <text class="ts" x="338" y="366" text-anchor="middle" dominant-baseline="central">A100 量化 175B 模型约 4 小时（vs OBQ 需要几百年）</text>
+  <text class="ts" x="338" y="384" text-anchor="middle" dominant-baseline="central">实际精度接近 OBQ（贪心选择带来的收益可以忽略）</text>
+</g>
+</svg>
+<div class="callout"><b>Cholesky 分解是什么：</b>这是一种把正定矩阵 H 分解成 H = LLᵀ 的方法（L 是下三角矩阵）。分解一次之后，之后每步需要用到 H⁻¹ 的某个分量时，都能用 L 高效稳定地计算，避免了直接维护 H⁻¹ 时浮点误差积累导致的数值爆炸。</div>
+</div>
+
+<!-- ⑦ 完整流程 -->
+<div class="pn">
+<svg width="100%" viewBox="0 0 680 440" role="img">
+<title>GPTQ完整算法流程，包含具体数字示例</title>
+<desc>从校准数据到输出量化权重的每一步，附带具体数字演示</desc>
+<defs><marker id="a" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>
+
+<g class="c-gray">
+  <rect x="40" y="20" width="596" height="38" rx="8" stroke-width="0.5"/>
+  <text class="th" x="338" y="39" text-anchor="middle" dominant-baseline="central">输入：权重矩阵 W，校准数据激活 X（约128条样本）</text>
+</g>
+
+<line x1="338" y1="60" x2="338" y2="80" stroke="var(--color-border-secondary)" stroke-width="1" marker-end="url(#a)"/>
+
+<g class="c-purple">
+  <rect x="80" y="82" width="516" height="38" rx="8" stroke-width="0.5"/>
+  <text class="th" x="338" y="101" text-anchor="middle" dominant-baseline="central">步骤 1：计算 H = 2XXᵀ，然后做 Cholesky 分解</text>
+</g>
+
+<line x1="338" y1="122" x2="338" y2="142" stroke="var(--color-border-secondary)" stroke-width="1" marker-end="url(#a)"/>
+
+<rect x="40" y="144" width="596" height="210" rx="8" fill="none" stroke="var(--color-border-secondary)" stroke-width="0.5" stroke-dasharray="6 3"/>
+<text class="ts" x="60" y="163">for 每一列 q = 0, 1, 2, … 从左到右（每 128 列批量处理一次）</text>
+
+<g class="c-teal">
+  <rect x="60" y="170" width="556" height="38" rx="8" stroke-width="0.5"/>
+  <text class="th" x="338" y="189" text-anchor="middle" dominant-baseline="central">步骤 2：量化第 q 列   Q[:,q] = round(W[:,q] / scale) × scale</text>
+</g>
+
+<g class="c-amber">
+  <rect x="60" y="222" width="556" height="38" rx="8" stroke-width="0.5"/>
+  <text class="th" x="338" y="241" text-anchor="middle" dominant-baseline="central">步骤 3：计算误差   E[:,q] = (W[:,q] − Q[:,q]) / H⁻¹[q,q]</text>
+</g>
+
+<g class="c-coral">
+  <rect x="60" y="274" width="556" height="38" rx="8" stroke-width="0.5"/>
+  <text class="th" x="338" y="293" text-anchor="middle" dominant-baseline="central">步骤 4：补偿后续权重  W[:,q+1:] -= E[:,q] ⊗ H⁻¹[q, q+1:]</text>
+</g>
+
+<text class="ts" x="60" y="328">end for</text>
+
+<line x1="338" y1="336" x2="338" y2="356" stroke="var(--color-border-secondary)" stroke-width="1" marker-end="url(#a)"/>
+
+<g class="c-green">
+  <rect x="80" y="358" width="516" height="60" rx="8" stroke-width="0.5"/>
+  <text class="th" x="338" y="382" text-anchor="middle" dominant-baseline="central">输出：量化权重矩阵 Q，以及每列的 scale 值</text>
+  <text class="ts" x="338" y="404" text-anchor="middle" dominant-baseline="central">推理时：先读 Q（INT4），乘以 scale，得到近似 FP16，再做矩阵乘</text>
+</g>
+</svg>
+<div class="good"><b>步骤 4 是整个算法的灵魂。</b>每次量化完一列，"误差向量 E" 乘以 H⁻¹ 的对应行，然后从后续所有列里减掉。这意味着：下一列看到的 W 已经是"预先补偿过"的权重，而不是原始权重。误差像涟漪一样向右传播并被吸收，而不是累积。</div>
+<div class="callout"><b>和 RTN 对比的最终总结：</b>RTN 每个权重看一眼四舍五入就完事，O(d) 时间，但误差没有任何补偿。GPTQ 量化每列后立刻对后续列做精确修正，O(d³) 时间，误差大幅减小。在 175B 模型上，INT4 GPTQ 的困惑度只比 FP16 高不到 5%，而 RTN 能高出 10% 以上。</div>
+</div>
+
+</div>
+
+<script>
+const btns = document.querySelectorAll('.nb');
+const panels = document.querySelectorAll('.pn');
+function go(i) {
+  btns.forEach((b,j) => b.classList.toggle('on', i===j));
+  panels.forEach((p,j) => p.classList.toggle('on', i===j));
+}
+</script>

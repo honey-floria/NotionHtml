@@ -1,0 +1,328 @@
+
+<style>
+.step-nav { display:flex; gap:6px; margin-bottom:16px; flex-wrap:wrap; }
+.step-btn { padding:5px 14px; font-size:13px; border-radius:20px; border:0.5px solid var(--color-border-secondary); background:transparent; color:var(--color-text-secondary); cursor:pointer; transition:all .2s; }
+.step-btn.active { background:var(--color-background-info); color:var(--color-text-info); border-color:var(--color-border-info); font-weight:500; }
+.panel { display:none; }
+.panel.active { display:block; }
+.label-box { font-size:12px; color:var(--color-text-secondary); margin-top:4px; text-align:center; }
+.eq { font-family:var(--font-mono); font-size:13px; background:var(--color-background-secondary); padding:8px 14px; border-radius:8px; color:var(--color-text-primary); margin:8px 0; display:inline-block; line-height:1.6; }
+.callout { border-left:2px solid var(--color-border-info); padding:8px 12px; background:var(--color-background-info); border-radius:0 8px 8px 0; font-size:13px; color:var(--color-text-secondary); margin:12px 0; }
+.callout b { color:var(--color-text-primary); font-weight:500; }
+</style>
+
+<h2 class="sr-only">GPTQ 量化算法详解，共6个步骤</h2>
+
+<div class="step-nav">
+  <button class="step-btn active" onclick="go(0)">① 量化目标</button>
+  <button class="step-btn" onclick="go(1)">② 为何用 Hessian</button>
+  <button class="step-btn" onclick="go(2)">③ OBS 推导</button>
+  <button class="step-btn" onclick="go(3)">④ GPTQ 三改进</button>
+  <button class="step-btn" onclick="go(4)">⑤ 算法全貌</button>
+  <button class="step-btn" onclick="go(5)">⑥ 数值例子</button>
+</div>
+
+<div id="panels">
+
+<!-- 0 量化目标 -->
+<div class="panel active">
+  <svg width="100%" viewBox="0 0 680 300" role="img">
+    <title>量化目标示意图</title>
+    <desc>将浮点权重替换为低比特整数，目标是最小化输出误差</desc>
+    <defs><marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>
+
+    <!-- FP16 权重矩阵 -->
+    <g class="c-purple">
+      <rect x="40" y="60" width="140" height="100" rx="8" stroke-width="0.5"/>
+      <text class="th" x="110" y="100" text-anchor="middle" dominant-baseline="central">W (FP16)</text>
+      <text class="ts" x="110" y="122" text-anchor="middle" dominant-baseline="central">0.3821, −1.247…</text>
+    </g>
+
+    <!-- 量化箭头 -->
+    <line x1="184" y1="110" x2="240" y2="110" class="arr" marker-end="url(#arrow)" stroke="#EF9F27"/>
+    <text class="ts" x="212" y="100" text-anchor="middle" fill="#BA7517">quant</text>
+
+    <!-- INT4 权重 -->
+    <g class="c-amber">
+      <rect x="244" y="60" width="140" height="100" rx="8" stroke-width="0.5"/>
+      <text class="th" x="314" y="100" text-anchor="middle" dominant-baseline="central">Q̂ (INT4)</text>
+      <text class="ts" x="314" y="122" text-anchor="middle" dominant-baseline="central">6, −10, 3…</text>
+    </g>
+
+    <!-- 误差箭头 -->
+    <line x1="388" y1="110" x2="444" y2="110" class="arr" marker-end="url(#arrow)" stroke="#E24B4A"/>
+    <text class="ts" x="416" y="100" text-anchor="middle" fill="#A32D2D">Δ = W−Q̂</text>
+
+    <!-- 误差框 -->
+    <g class="c-red">
+      <rect x="448" y="60" width="140" height="100" rx="8" stroke-width="0.5"/>
+      <text class="th" x="518" y="95" text-anchor="middle" dominant-baseline="central">量化误差</text>
+      <text class="ts" x="518" y="117" text-anchor="middle" dominant-baseline="central">‖WX − Q̂X‖²</text>
+    </g>
+
+    <!-- 目标 -->
+    <rect x="40" y="200" width="598" height="60" rx="8" fill="none" stroke="var(--color-border-secondary)" stroke-width="0.5" stroke-dasharray="5 3"/>
+    <text class="th" x="339" y="226" text-anchor="middle" dominant-baseline="central">目标：min ‖WX − Q̂X‖²F    对每层 Linear/Attention 独立优化</text>
+    <text class="ts" x="339" y="247" text-anchor="middle" dominant-baseline="central">X 为校准集上的实际输入激活（≈ 128 条样本）</text>
+  </svg>
+  <div class="callout"><b>关键洞察：</b>不最小化权重误差 ‖W−Q̂‖，而是最小化<b>输出</b>误差 ‖WX−Q̂X‖。因为权重值本身偏差不重要，重要的是它对下一层输入的影响。</div>
+</div>
+
+<!-- 1 为何用 Hessian -->
+<div class="panel">
+  <svg width="100%" viewBox="0 0 680 310" role="img">
+    <title>为何需要 Hessian 矩阵</title>
+    <desc>权重之间存在相关性，量化一个权重的误差可以用其他权重补偿</desc>
+    <defs><marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>
+
+    <!-- RTN 方式 -->
+    <g class="c-red">
+      <rect x="40" y="40" width="260" height="44" rx="8" stroke-width="0.5"/>
+      <text class="th" x="170" y="62" text-anchor="middle" dominant-baseline="central">RTN：直接四舍五入每个权重</text>
+    </g>
+    <text class="ts" x="170" y="106" text-anchor="middle">每个权重独立处理，忽略相互影响</text>
+    <text class="ts" x="170" y="126" text-anchor="middle">→ 误差在大模型上会累积</text>
+
+    <!-- GPTQ 方式 -->
+    <g class="c-teal">
+      <rect x="380" y="40" width="260" height="44" rx="8" stroke-width="0.5"/>
+      <text class="th" x="510" y="62" text-anchor="middle" dominant-baseline="central">GPTQ：量化后补偿其他权重</text>
+    </g>
+    <text class="ts" x="510" y="106" text-anchor="middle">量化 w₁ 产生误差 ε</text>
+    <text class="ts" x="510" y="126" text-anchor="middle">→ 调整 w₂, w₃… 来抵消 ε</text>
+
+    <!-- 分隔线 -->
+    <line x1="340" y1="30" x2="340" y2="160" stroke="var(--color-border-tertiary)" stroke-width="0.5" stroke-dasharray="4 4"/>
+
+    <!-- 权重相关性说明 -->
+    <rect x="40" y="170" width="598" height="100" rx="8" fill="none" stroke="var(--color-border-secondary)" stroke-width="0.5"/>
+    <text class="th" x="339" y="196" text-anchor="middle" dominant-baseline="central">为何权重间可以互相补偿？</text>
+    <text class="ts" x="339" y="218" text-anchor="middle" dominant-baseline="central">输出 y = w₁x₁ + w₂x₂ + w₃x₃ + …（线性叠加）</text>
+    <text class="ts" x="339" y="238" text-anchor="middle" dominant-baseline="central">量化 w₁→ŵ₁，误差 δ₁ = ŵ₁ − w₁，只需让 δ₂x₂ = −δ₁x₁ 即可补偿</text>
+    <text class="ts" x="339" y="258" text-anchor="middle" dominant-baseline="central">补偿的最优量由 <tspan font-style="italic">H⁻¹</tspan>（Hessian 逆矩阵）决定</text>
+  </svg>
+  <div class="callout"><b>Hessian 的含义：</b>H = 2XX ᵀ 描述了各权重对输出误差的二阶贡献。H⁻¹ 的第 q 列告诉我们：量化 wq 后，每个其他权重应该被调整多少。</div>
+</div>
+
+<!-- 2 OBS推导 -->
+<div class="panel">
+  <svg width="100%" viewBox="0 0 680 340" role="img">
+    <title>OBS框架推导：量化权重后如何补偿其余权重</title>
+    <desc>OBS 是 GPTQ 的理论基础，通过约束优化推导出最优权重更新量</desc>
+    <defs><marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>
+
+    <!-- 步骤框 -->
+    <g class="c-purple">
+      <rect x="40" y="30" width="600" height="46" rx="8" stroke-width="0.5"/>
+      <text class="th" x="340" y="53" text-anchor="middle" dominant-baseline="central">优化问题：量化第 q 个权重，最小化其他权重的补偿误差</text>
+    </g>
+
+    <!-- 公式框1：目标函数 -->
+    <rect x="40" y="100" width="288" height="90" rx="8" fill="none" stroke="var(--color-border-secondary)" stroke-width="0.5"/>
+    <text class="ts" x="184" y="124" text-anchor="middle">目标函数（泰勒展开到二阶）</text>
+    <text class="ts" x="184" y="150" text-anchor="middle" font-family="var(--font-mono)">min ½ δFᵀ HF δF</text>
+    <text class="ts" x="184" y="170" text-anchor="middle">δF = 其余权重的调整量</text>
+
+    <!-- 公式框2：约束 -->
+    <rect x="352" y="100" width="288" height="90" rx="8" fill="none" stroke="var(--color-border-secondary)" stroke-width="0.5"/>
+    <text class="ts" x="496" y="124" text-anchor="middle">等式约束（第 q 个权重已定）</text>
+    <text class="ts" x="496" y="150" text-anchor="middle" font-family="var(--font-mono)">eq ᵀ δF = quant(wq) − wq</text>
+    <text class="ts" x="496" y="170" text-anchor="middle">即第 q 维的调整量固定为量化误差</text>
+
+    <!-- 箭头 -->
+    <line x1="340" y1="145" x2="340" y2="145" stroke="none"/>
+    <line x1="200" y1="195" x2="340" y2="240" class="arr" marker-end="url(#arrow)"/>
+    <line x1="496" y1="195" x2="380" y2="240" class="arr" marker-end="url(#arrow)"/>
+
+    <!-- 解析解 -->
+    <g class="c-teal">
+      <rect x="80" y="244" width="518" height="76" rx="8" stroke-width="0.5"/>
+      <text class="th" x="339" y="270" text-anchor="middle" dominant-baseline="central">拉格朗日解：</text>
+      <text class="ts" x="339" y="295" text-anchor="middle" font-family="var(--font-mono)">δF = − (wq − quant(wq)) / [H⁻¹]qq × H⁻¹:,q</text>
+    </g>
+  </svg>
+  <div class="callout"><b>解的含义：</b><code>[H⁻¹]qq</code> 是敏感度（越小 = 该权重越关键，越难量化）。<code>H⁻¹:,q</code> 是第 q 列，决定了误差如何"分配"到其余各权重。两者一除一乘，就完成了精确的误差补偿。</div>
+</div>
+
+<!-- 3 GPTQ三改进 -->
+<div class="panel">
+  <svg width="100%" viewBox="0 0 680 360" role="img">
+    <title>GPTQ 相对于 OBQ 的三个关键工程改进</title>
+    <desc>固定顺序、批量更新、Cholesky 预计算，将 OBQ 变得实用</desc>
+    <defs><marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>
+
+    <!-- OBQ 问题 -->
+    <g class="c-red">
+      <rect x="40" y="30" width="600" height="44" rx="8" stroke-width="0.5"/>
+      <text class="th" x="340" y="52" text-anchor="middle" dominant-baseline="central">OBQ 瓶颈：每量化一个权重需 O(d²) 更新 → 整层 O(d³) per weight，太慢</text>
+    </g>
+
+    <!-- 改进1 -->
+    <g class="c-purple">
+      <rect x="40" y="104" width="180" height="46" rx="8" stroke-width="0.5"/>
+      <text class="th" x="130" y="127" text-anchor="middle" dominant-baseline="central">改进 1</text>
+    </g>
+    <rect x="40" y="162" width="180" height="120" rx="8" fill="none" stroke="var(--color-border-secondary)" stroke-width="0.5"/>
+    <text class="ts" x="130" y="185" text-anchor="middle" font-weight="500">固定列顺序</text>
+    <text class="ts" x="130" y="207" text-anchor="middle">OBQ 每步贪心选</text>
+    <text class="ts" x="130" y="225" text-anchor="middle">最优权重（O(d²) 搜索）</text>
+    <text class="ts" x="130" y="247" text-anchor="middle">→ 改为从左到右</text>
+    <text class="ts" x="130" y="265" text-anchor="middle">精度损失可忽略</text>
+
+    <!-- 改进2 -->
+    <g class="c-teal">
+      <rect x="250" y="104" width="180" height="46" rx="8" stroke-width="0.5"/>
+      <text class="th" x="340" y="127" text-anchor="middle" dominant-baseline="central">改进 2</text>
+    </g>
+    <rect x="250" y="162" width="180" height="120" rx="8" fill="none" stroke="var(--color-border-secondary)" stroke-width="0.5"/>
+    <text class="ts" x="340" y="185" text-anchor="middle" font-weight="500">批量延迟更新</text>
+    <text class="ts" x="340" y="207" text-anchor="middle">攒 128 列一起更新</text>
+    <text class="ts" x="340" y="225" text-anchor="middle">H⁻¹，替代逐列</text>
+    <text class="ts" x="340" y="247" text-anchor="middle">实时更新</text>
+    <text class="ts" x="340" y="265" text-anchor="middle">→ GPU 利用率 ↑10×</text>
+
+    <!-- 改进3 -->
+    <g class="c-amber">
+      <rect x="460" y="104" width="180" height="46" rx="8" stroke-width="0.5"/>
+      <text class="th" x="550" y="127" text-anchor="middle" dominant-baseline="central">改进 3</text>
+    </g>
+    <rect x="460" y="162" width="180" height="120" rx="8" fill="none" stroke="var(--color-border-secondary)" stroke-width="0.5"/>
+    <text class="ts" x="550" y="185" text-anchor="middle" font-weight="500">Cholesky 预分解</text>
+    <text class="ts" x="550" y="207" text-anchor="middle">维护 H⁻¹ 数值不稳</text>
+    <text class="ts" x="550" y="225" text-anchor="middle">→ 提前 Cholesky 分</text>
+    <text class="ts" x="550" y="243" text-anchor="middle">解，稳定求解每步</text>
+    <text class="ts" x="550" y="261" text-anchor="middle">所需分量</text>
+
+    <!-- 合并箭头 -->
+    <line x1="130" y1="284" x2="260" y2="328" class="arr" marker-end="url(#arrow)"/>
+    <line x1="340" y1="284" x2="340" y2="328" class="arr" marker-end="url(#arrow)"/>
+    <line x1="550" y1="284" x2="420" y2="328" class="arr" marker-end="url(#arrow)"/>
+    <g class="c-green">
+      <rect x="80" y="330" width="520" height="22" rx="8" stroke-width="0.5"/>
+      <text class="th" x="340" y="341" text-anchor="middle" dominant-baseline="central">整层总复杂度 O(d³)，A100 量化 175B 模型约 4 小时</text>
+    </g>
+  </svg>
+</div>
+
+<!-- 4 算法全貌 -->
+<div class="panel">
+  <svg width="100%" viewBox="0 0 680 400" role="img">
+    <title>GPTQ 完整算法流程</title>
+    <desc>从输入校准数据到输出量化权重的完整步骤</desc>
+    <defs><marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>
+
+    <!-- 步骤1 -->
+    <g class="c-gray">
+      <rect x="40" y="30" width="598" height="46" rx="8" stroke-width="0.5"/>
+      <text class="th" x="339" y="53" text-anchor="middle" dominant-baseline="central">输入：W ∈ ℝ^(dout×din)，校准集激活 X ∈ ℝ^(din×N)</text>
+    </g>
+
+    <line x1="339" y1="78" x2="339" y2="106" class="arr" marker-end="url(#arrow)"/>
+
+    <!-- 步骤2 -->
+    <g class="c-purple">
+      <rect x="100" y="108" width="478" height="46" rx="8" stroke-width="0.5"/>
+      <text class="th" x="339" y="131" text-anchor="middle" dominant-baseline="central">① 计算 H = 2XXᵀ，对 H 做 Cholesky 分解</text>
+    </g>
+
+    <line x1="339" y1="156" x2="339" y2="184" class="arr" marker-end="url(#arrow)"/>
+
+    <!-- 循环框 -->
+    <rect x="40" y="186" width="598" height="158" rx="8" fill="none" stroke="var(--color-border-secondary)" stroke-width="0.5" stroke-dasharray="6 3"/>
+    <text class="ts" x="60" y="204">for q = 0 → d_in (按列)</text>
+
+    <g class="c-teal">
+      <rect x="70" y="210" width="540" height="40" rx="6" stroke-width="0.5"/>
+      <text class="th" x="340" y="230" text-anchor="middle" dominant-baseline="central">② 量化：Q[:,q] = round( W[:,q] / scale ) × scale</text>
+    </g>
+
+    <g class="c-amber">
+      <rect x="70" y="264" width="540" height="40" rx="6" stroke-width="0.5"/>
+      <text class="th" x="340" y="284" text-anchor="middle" dominant-baseline="central">③ 误差：E[:,q] = (W[:,q] − Q[:,q]) / [H⁻¹]qq</text>
+    </g>
+
+    <g class="c-coral">
+      <rect x="70" y="318" width="540" height="20" rx="6" stroke-width="0.5"/>
+      <text class="th" x="340" y="328" text-anchor="middle" dominant-baseline="central">④ 补偿：W[:,q+1:] −= E[:,q] ⊗ H⁻¹[q, q+1:]</text>
+    </g>
+
+    <line x1="339" y1="348" x2="339" y2="366" class="arr" marker-end="url(#arrow)"/>
+
+    <!-- 输出 -->
+    <g class="c-green">
+      <rect x="100" y="368" width="478" height="24" rx="8" stroke-width="0.5"/>
+      <text class="th" x="339" y="380" text-anchor="middle" dominant-baseline="central">输出：量化权重矩阵 Q，及每列的 scale / zero_point</text>
+    </g>
+  </svg>
+  <div class="callout"><b>补偿的直觉：</b>步骤④是核心。量化第 q 列产生的误差向量 E，乘以 H⁻¹ 的对应行，精确地"预告"了这个误差会对后续各列的输出造成多少影响——然后立刻从 W 中减掉，让下一列量化时面对的是已经修正过的权重。</div>
+</div>
+
+<!-- 5 数值例子 -->
+<div class="panel">
+  <svg width="100%" viewBox="0 0 680 380" role="img">
+    <title>GPTQ 简化数值示例：2×2 权重矩阵逐步量化过程</title>
+    <desc>通过具体数字展示量化一个权重后如何补偿另一个权重</desc>
+    <defs><marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>
+
+    <!-- 原始权重 -->
+    <text class="ts" x="110" y="36" text-anchor="middle">原始权重 W</text>
+    <g class="c-purple">
+      <rect x="40" y="44" width="140" height="54" rx="8" stroke-width="0.5"/>
+      <text class="ts" x="110" y="68" text-anchor="middle" font-family="var(--font-mono)">w₁ = 0.74</text>
+      <text class="ts" x="110" y="87" text-anchor="middle" font-family="var(--font-mono)">w₂ = 0.31</text>
+    </g>
+
+    <!-- H 矩阵 -->
+    <text class="ts" x="310" y="36" text-anchor="middle">H⁻¹（示意值）</text>
+    <g class="c-gray">
+      <rect x="220" y="44" width="180" height="54" rx="8" stroke-width="0.5"/>
+      <text class="ts" x="310" y="68" text-anchor="middle" font-family="var(--font-mono)">H⁻¹ = [[1.2, 0.4],</text>
+      <text class="ts" x="310" y="87" text-anchor="middle" font-family="var(--font-mono)">        [0.4, 0.9]]</text>
+    </g>
+
+    <!-- 步骤说明 -->
+    <text class="ts" x="560" y="36" text-anchor="middle">scale = 0.25（INT4）</text>
+    <g class="c-amber">
+      <rect x="440" y="44" width="200" height="54" rx="8" stroke-width="0.5"/>
+      <text class="ts" x="540" y="68" text-anchor="middle">scale = 0.25</text>
+      <text class="ts" x="540" y="87" text-anchor="middle">round(x / 0.25) × 0.25</text>
+    </g>
+
+    <!-- 量化步骤 -->
+    <line x1="110" y1="100" x2="110" y2="128" class="arr" marker-end="url(#arrow)"/>
+    <g class="c-teal">
+      <rect x="40" y="130" width="590" height="44" rx="8" stroke-width="0.5"/>
+      <text class="th" x="335" y="152" text-anchor="middle" dominant-baseline="central">① 量化 w₁：round(0.74 / 0.25) × 0.25 = round(2.96) × 0.25 = 3 × 0.25 = 0.75</text>
+    </g>
+
+    <line x1="335" y1="176" x2="335" y2="204" class="arr" marker-end="url(#arrow)"/>
+    <g class="c-coral">
+      <rect x="40" y="206" width="590" height="44" rx="8" stroke-width="0.5"/>
+      <text class="th" x="335" y="228" text-anchor="middle" dominant-baseline="central">② 误差：ε₁ = (0.75 − 0.74) / H⁻¹₁₁ = 0.01 / 1.2 = 0.00833</text>
+    </g>
+
+    <line x1="335" y1="252" x2="335" y2="280" class="arr" marker-end="url(#arrow)"/>
+    <g class="c-amber">
+      <rect x="40" y="282" width="590" height="44" rx="8" stroke-width="0.5"/>
+      <text class="th" x="335" y="304" text-anchor="middle" dominant-baseline="central">③ 补偿 w₂：w₂ ← 0.31 − 0.00833 × H⁻¹₁₂ = 0.31 − 0.00833 × 0.4 = 0.3067</text>
+    </g>
+
+    <line x1="335" y1="328" x2="335" y2="356" class="arr" marker-end="url(#arrow)"/>
+    <g class="c-green">
+      <rect x="40" y="358" width="590" height="18" rx="8" stroke-width="0.5"/>
+      <text class="th" x="335" y="367" text-anchor="middle" dominant-baseline="central">④ 量化 w₂（已补偿）：round(0.3067 / 0.25) × 0.25 = 1 × 0.25 = 0.25（比直接量化 0.31→0.25 误差更小）</text>
+    </g>
+  </svg>
+  <div class="callout"><b>对比：</b>RTN 直接量化 w₂ = 0.31 → 0.25，误差 0.06。GPTQ 先补偿再量化 0.3067 → 0.25，误差 0.0567。虽然单个权重差距小，但在亿级参数上这种系统性补偿能显著降低困惑度（PPL）。</div>
+</div>
+
+</div>
+
+<script>
+const btns = document.querySelectorAll('.step-btn');
+const panels = document.querySelectorAll('.panel');
+function go(i) {
+  btns.forEach((b,j) => b.classList.toggle('active', i===j));
+  panels.forEach((p,j) => p.classList.toggle('active', i===j));
+}
+</script>
